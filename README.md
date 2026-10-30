@@ -26,6 +26,9 @@ Runs on CPU, no GPU and no PyTorch (int8 ONNX models are inside the package, not
 Needs Python 3.10+, and Node 18+ when you use Playwright MCP. A browser once: `python -m playwright install chromium`.
 On Windows, `onnxruntime` needs the Microsoft Visual C++ 2015–2022 runtime (usually already installed).
 
+Step-by-step guide for existing agents (install, code change, script generation, measuring, rollout):
+[docs/INTEGRATION.md](docs/INTEGRATION.md).
+
 ## 1. LangGraph agent with Playwright MCP (three lines change)
 
 ```python
