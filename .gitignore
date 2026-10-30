@@ -16,3 +16,7 @@ __pycache__/
 .DS_Store
 # separate work in this folder, not part of the package
 webagent/
+# training / research code: private (own git repo inside training/), not part of the public package
+training/
+# full CI logs contain local paths; the reports (ci/reports/*.md) are kept
+ci/reports/*.log

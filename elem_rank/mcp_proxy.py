@@ -79,19 +79,10 @@ class Finder:
         docs = [doc(e) for e in els]
         key = ("snap", hash(snapshot))  # live pages change: keep their embeddings in memory only
         if self.rk is None:
-            from .lite import LiteRanker, bundle_dir
-            if bundle_dir():  # shipped ONNX bundle: no PyTorch needed
-                self.rk = LiteRanker()
-            else:  # repo checkout with the PyTorch models
-                from . import find as F
-                self.rk = F.build(None)
-        if hasattr(self.rk, "cut"):
-            s, lg = self.rk.rank(step, docs, key)
-            k = self.rk.cut(lg, self.lam) or 5
-        else:
-            from . import find as F
-            k = F.cut_size(self.rk, step, els, docs, key, self.lam) or 5
-            s = self.rk.score(step, els, docs=docs, key=key)
+            from .lite import LiteRanker
+            self.rk = LiteRanker()  # the ONNX models shipped in the package
+        s, lg = self.rk.rank(step, docs, key)
+        k = self.rk.cut(lg, self.lam) or 5
         s = demote_orphans(np.array(s, dtype=float), els)
         k = min(k, cap) if cap else k
         top = sorted(range(len(els)), key=lambda i: -s[i])[:k]

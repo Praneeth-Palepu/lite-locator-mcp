@@ -18,8 +18,12 @@ Every release: what changed, why, and how it was checked. Reports with the full 
   at once (0.1.2's JS-only control support did not cover that shape).
 - Docs: README rewritten (setup table, three usage paths, behaviour table, limits). LangChain users must not install
   `[mcp]`: the latest langchain-mcp-adapters breaks with mcp 2.x (found by the new LangChain CI environment).
-- Process: local git history, test suite, `ci/check.sh` (17 checks) and `ci/publish.sh` (uploads only an all-green
-  report of the current commit).
+- Process: git history, test suite, `ci/check.sh` (17 checks) and `ci/publish.sh` (uploads only an all-green report
+  of the current commit).
+- Packaging: the training / research code (crawler, query generation, model training, evaluation, ONNX export) is no
+  longer inside the package or the public repository; the wheel contains only the runtime. The `[train]` extra and
+  the proxy's PyTorch fallback are gone (the shipped ONNX models are always used). Source repository linked on PyPI:
+  https://github.com/Praneeth-Palepu/lite-locator-mcp
 **Why:** the worst cases of "shortlist + what changed" (owner review, 2026-10-30): a late response reported as "no
 change" could make the agent repeat a payment; a wrong look-alike pick was not visible in the diff; partial views
 could pass a whole-page check; busy pages flooded the diff.

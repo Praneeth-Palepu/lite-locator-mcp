@@ -77,7 +77,7 @@ else step "ranking quality gate (hard held-out steps)" $M/python ci/quality_gate
   echo "## Model files (sha256)"
   (cd elem_rank/models-lite && shasum -a 256 *.onnx *.npz lite.json | sed 's/^/    /')
   echo
-  echo "Full output: \`$LOG\`"
+  echo "Full output: kept locally (ci/reports/$VER.log, not published)."
 } > "$REPORT"
 cp "$LOG" "ci/reports/$VER.log"
 echo; echo "report: $REPORT"; [ $FAIL -eq 0 ] && echo "ALL GREEN" || echo "NOT GREEN"

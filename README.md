@@ -120,6 +120,9 @@ metadata checks, the test suite on local test pages in three environments (proxy
 latest adapters, and next to mcp 1.3), and a ranking quality gate against a recorded baseline. The report goes to
 `ci/reports/<version>.md`; `ci/publish.sh` uploads only an all-green report of the current commit.
 
+The training code (data collection, model training and evaluation) is not part of this repository; the package
+ships the trained models.
+
 ## Credits and licences
 
 - Code: MIT (see LICENSE).

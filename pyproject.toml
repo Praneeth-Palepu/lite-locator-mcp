@@ -25,8 +25,12 @@ dependencies = ["numpy>=1.24", "onnxruntime>=1.17", "tokenizers>=0.15"]
 [project.optional-dependencies]
 # the MCP proxy server (lite-locator-mcp command)
 mcp = ["mcp>=2.3,<3"]
-# retraining / experiments in this repo
-train = ["torch>=2.2", "transformers>=4.40", "sentence-transformers>=3.0", "datasets>=2.18", "rank_bm25", "playwright>=1.44", "onnx"]
+
+[project.urls]
+Homepage = "https://github.com/Praneeth-Palepu/lite-locator-mcp"
+Source = "https://github.com/Praneeth-Palepu/lite-locator-mcp"
+Issues = "https://github.com/Praneeth-Palepu/lite-locator-mcp/issues"
+Changelog = "https://github.com/Praneeth-Palepu/lite-locator-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 lite-locator-mcp = "elem_rank.mcp_proxy:run"
@@ -47,7 +51,7 @@ ignore = ["E731"]  # small lambdas assigned to names are used on purpose
 
 [tool.ruff.lint.per-file-ignores]
 # training / data-preparation scripts (not used at runtime): long prompt and template strings kept on one line
-"elem_rank/{gen_script,queries,mind2web,crawl,experiments,export_onnx}.py" = ["E501"]
+"training/*.py" = ["E501"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
