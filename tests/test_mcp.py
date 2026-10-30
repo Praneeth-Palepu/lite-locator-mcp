@@ -9,6 +9,18 @@ import sys
 import pytest
 
 pytestmark = pytest.mark.skipif(shutil.which("npx") is None, reason="needs npx (Node) for Playwright MCP")
+
+
+def _mcp_major():
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return int(version("mcp").split(".")[0])
+    except PackageNotFoundError:
+        return 0
+
+
+# the proxy needs the [mcp] extra (mcp >= 2); LangChain environments keep mcp 1.x
+needs_proxy = pytest.mark.skipif(_mcp_major() < 2, reason="the MCP proxy needs mcp >= 2 (the [mcp] extra)")
 PW_MCP = os.environ.get("TEST_PW_MCP", "@playwright/mcp@0.0.83")  # mcp 1.3 clients need an older one (0.0.29)
 
 
@@ -16,6 +28,7 @@ def _text(res):
     return "".join(c.text for c in res.content if getattr(c, "type", "") == "text")
 
 
+@needs_proxy
 def test_proxy_find_and_diff(site):
     pytest.importorskip("mcp.server.lowlevel")
     from mcp import ClientSession, StdioServerParameters
@@ -63,6 +76,7 @@ def test_langchain_with_real_mcp(site, loc):
     asyncio.run(run())
 
 
+@needs_proxy
 def test_proxy_describes_icon_only_buttons(site):
     pytest.importorskip("mcp.server.lowlevel")
     from mcp import ClientSession, StdioServerParameters

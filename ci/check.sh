@@ -52,12 +52,12 @@ step "tests: unit + browser + proxy end to end (mcp 2.x)" bash -c "cd '$WORK' &&
 venv "$WORK/lc"; L=$WORK/lc/bin
 step "install wheel next to latest langchain-mcp-adapters" bash -c "$L/pip install -q '$WHEEL' 'mcp<2' langchain-core langchain-mcp-adapters pytest playwright && $L/pip check"
 step "dependency vulnerabilities, LangChain env (pip-audit)" $T/pip-audit --path "$($L/python -c 'import site;print(site.getsitepackages()[0])')" --progress-spinner off
-step "tests: LangChain wrapper + real Playwright MCP" bash -c "cd '$WORK' && $L/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' -k 'not test_proxy_find_and_diff'"
+step "tests: LangChain wrapper + real Playwright MCP" bash -c "cd '$WORK' && $L/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' "
 
 # 3) compatibility: an office-like environment that must keep mcp 1.3 untouched
 venv "$WORK/compat"; C=$WORK/compat/bin
 step "compat: install next to mcp 1.3 (unchanged)" bash -c "$C/pip install -q 'mcp==1.3.0' 'pydantic<2.11' 'langchain-core<0.4' 'langchain-mcp-adapters==0.0.4' pytest playwright && $C/pip install -q '$WHEEL' && $C/pip show mcp | grep -q 'Version: 1.3.0' && $C/pip check && echo 'mcp 1.3.0 kept'"
-step "compat: tests (mcp 1.3 + Playwright MCP 0.0.29)" bash -c "cd '$WORK' && TEST_PW_MCP=@playwright/mcp@0.0.29 $C/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' -k 'not test_proxy_find_and_diff'"
+step "compat: tests (mcp 1.3 + Playwright MCP 0.0.29)" bash -c "cd '$WORK' && TEST_PW_MCP=@playwright/mcp@0.0.29 $C/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' "
 
 if [ "${QUICK:-0}" = "1" ]; then rows+=("| ranking quality gate | ⏭ skipped (QUICK) | | |"); FAIL=1
 else step "ranking quality gate (hard held-out steps)" $M/python ci/quality_gate.py; fi
