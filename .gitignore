@@ -20,3 +20,5 @@ webagent/
 training/
 # full CI logs contain local paths; the reports (ci/reports/*.md) are kept
 ci/reports/*.log
+# research evaluation results: private
+results/
