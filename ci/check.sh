@@ -33,7 +33,7 @@ venv() {  # fresh venv at $1
 [ -x "$WORK/tools/bin/ruff" ] || { venv "$WORK/tools"; "$WORK/tools/bin/pip" install -q ruff bandit pip-audit build twine; }
 T=$WORK/tools/bin
 
-step "git: working tree committed" bash -c 'test -z "$(git status --porcelain)" && git log -1 --format="%h %s"'
+step "git: working tree committed" bash -c 'test -z "$(git status --porcelain -- . ":!ci/reports")" && git log -1 --format="%h %s"'
 step "lint (ruff)" $T/ruff check elem_rank lite_locator tests examples ci
 step "security scan (bandit, medium+)" $T/bandit -q -r elem_rank lite_locator -ll -c pyproject.toml
 step "secrets scan" bash -c '! git grep -nIE "pypi-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{30,}" -- . ":!ci/check.sh" && echo "no secrets in tracked files"'
