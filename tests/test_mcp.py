@@ -61,3 +61,22 @@ def test_langchain_with_real_mcp(site, loc):
             assert "Cart, 1 items" in out and "```yaml" not in out
 
     asyncio.run(run())
+
+
+def test_proxy_describes_icon_only_buttons(site):
+    pytest.importorskip("mcp.server.lowlevel")
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def run():
+        params = StdioServerParameters(command=sys.executable,
+                                       args=["-m", "elem_rank.mcp_proxy", "--", "--headless", "--isolated"],
+                                       env={"PLAYWRIGHT_MCP": f"npx -y {PW_MCP}", "PATH": os.environ["PATH"]})
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            await s.call_tool("browser_navigate", {"url": site + "/icons.html"})
+            f = _text(await s.call_tool("browser_find_element", {"step": "Add the product to the cart"}))
+            first = next(x for x in f.splitlines() if "[ref=" in x)
+            assert "add to cart" in first.lower(), f
+
+    asyncio.run(run())

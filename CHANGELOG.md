@@ -2,6 +2,33 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.5 (2026-10-30)
+**What** (all found by a complex flow on practicesoftwaretesting.com: search → sort → first product → quantity → add to
+cart → cart; each fix is generic and has a test on a local page):
+- Data-entry steps are ranked by their target element, not the typed value (`elem_rank/steps.py`): "Search for
+  pliers" picked the "Pliers" category checkbox instead of the search box.
+- Ordinal steps ("open the first product", "click the last result") pick by position in the page's main repeated list
+  of links; "first name" and similar field names are not positions.
+- Parser: YAML-quoted snapshot lines (text containing ": ", e.g. "CO₂: A B C") were dropped, which hid every product
+  card on the site.
+- Dropdowns include their option labels, so "sort by price, low to high" finds the sort box on MCP snapshots.
+- Unnamed buttons / links (icon buttons, "Add to cart" whose text is hidden from the accessibility tree) are described
+  from their DOM attributes with one `browser_evaluate` call per page state; matched to the snapshot in page order,
+  only when the counts agree exactly.
+- After an action, the result waits until the page settles (a sort changes the dropdown at once and re-orders the
+  list later); "new view" summaries only on pages with 20+ elements.
+- Wrapper / proxy repair LLM arguments: a whole candidate line passed as a ref becomes the ref; `browser_snapshot`
+  ignores `filename` so the tree stays inline.
+- `with_lite_locator(tools, keep={...})`: the LLM sees only the named tools (fewer tokens per call) while the library
+  still uses browser_snapshot / browser_evaluate. Filtering the list before wrapping hid those from the library.
+- Hints: pass only the ref; describing the element to act on works best.
+**Why:** owner asked for a complex use case on a different website, with the generated test script.
+**Result on the site** (LangGraph agent, local Qwen3 4B): 0.1.4 stopped at step 2; 0.1.5 completed every step and
+generated the script (search, sort, product, quantity, add to cart, open cart). The remaining errors were the small
+model's (it clicked "increase quantity" twice although the result showed 1 → 2, then 2 → 3), and the change reports
+made that visible.
+**Checked:** see `ci/reports/0.1.5.md`.
+
 ## 0.1.4 (2026-10-30)
 **What:**
 - Actions: when nothing changes, keep checking for up to 3 s (slow server responses) before reporting; the "no

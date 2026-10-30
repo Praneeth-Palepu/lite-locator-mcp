@@ -26,6 +26,10 @@ def main():
     from elem_rank.common import doc
     from elem_rank.lite import LiteRanker
     from elem_rank.snapshot import demote_orphans
+    try:
+        from elem_rank.steps import target_of  # 0.1.5+: the same query rewrite find() uses
+    except ImportError:
+        target_of = lambda q: q
     assert "site-packages" in elem_rank.__file__, "run with the installed wheel, not the source tree"
 
     rows = [json.loads(x) for x in open(REPO / "data/split/test.jsonl")]
@@ -44,7 +48,7 @@ def main():
     for r in rows:
         els = pages[r["page"]]
         docs = [doc(e) for e in els]
-        s, _ = rk.rank(r["query"], docs, r["page"])
+        s, _ = rk.rank(target_of(r["query"]), docs, r["page"])
         s = demote_orphans(np.array(s, dtype=float), els)
         order = np.argsort(-s, kind="stable")
         pos = {int(j): k + 1 for k, j in enumerate(order)}

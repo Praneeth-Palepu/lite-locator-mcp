@@ -188,6 +188,14 @@ async def _listeners_async(page, els):
         pass
 
 
+def _css_slot(e):
+    """List key for page elements: links whose CSS paths differ only in :nth-of-type indexes are items of one list."""
+    import re
+    if e.get("role") != "link" or not e.get("css"):
+        return None
+    return re.sub(r":nth-of-type\(\d+\)", "", e["css"])
+
+
 class Hits(list):
     """The shortlist (best first) plus what an agent needs to build its prompt."""
     prompt: str
@@ -205,7 +213,9 @@ class Locator:
         self.lam, self.rk = lam, LiteRanker(model_dir or bundle_dir())
 
     def _rank(self, step, docs, cap, els=None):
-        s, lg = self.rk.rank(step, docs, ("page", hash(tuple(docs))))  # same page state -> embeddings reused
+        from .steps import target_of
+        query = target_of(step)  # data-entry steps are ranked by their target element, not the typed value
+        s, lg = self.rk.rank(query, docs, ("page", hash(tuple(docs))))  # same page state -> embeddings reused
         if els is not None:
             from .snapshot import demote_orphans
             s = demote_orphans(s.copy(), els)
@@ -213,11 +223,28 @@ class Locator:
         k = min(k, cap) if cap else k
         return sorted(range(len(docs)), key=lambda i: -s[i])[:k], s
 
-    def _snapshot(self, text, step, cap):
-        from .snapshot import elements, line
-        els = elements(text)
+    @staticmethod
+    def _ordinal_first(top, els, step, slot):
+        """Ordinal steps ("open the first product"): the nth item of the page's main repeated list goes first."""
+        from .steps import ordinal_of, pick_ordinal
+        pos = ordinal_of(step)
+        if pos is None:
+            return top
+        groups = {}
+        for i, e in enumerate(els):
+            key = slot(e)
+            if key is not None and e.get("name"):
+                groups.setdefault(key, []).append(i)
+        groups = {k: v for k, v in groups.items() if len({els[i]["name"] for i in v}) == len(v)}  # distinct items
+        i = pick_ordinal(groups, pos)
+        return top if i is None else [i] + [j for j in top if j != i][: max(len(top) - 1, 1)]
+
+    def _snapshot(self, text, step, cap, details=None):
+        from .snapshot import elements, line, merge_details
+        els = merge_details(elements(text), details)
         docs = [doc(e) for e in els]
         top, s = self._rank(step, docs, cap, els) if els else ([], None)
+        top = self._ordinal_first(top, els, step, lambda e: (e.get("list") or (None,))[0])
         hits = Hits({"rank": r + 1, "score": round(float(s[i]), 3), "ref": els[i]["ref"], "role": els[i]["role"],
                      "name": els[i]["name"], "card": els[i].get("card", ""), "line": line(els[i])}
                     for r, i in enumerate(top))
@@ -244,11 +271,12 @@ class Locator:
         lines = [f'{h["rank"]}. {h["doc"]}\n   locator: {h["locator"]}' for h in hits]
         return hits, lines
 
-    def find(self, page_or_snapshot, step, max=None, verify=True, max_elements=1500):
+    def find(self, page_or_snapshot, step, max=None, verify=True, max_elements=1500, details=None):
         """Shortlist for one step. page_or_snapshot: a Playwright sync Page, or Playwright MCP snapshot text.
-        verify: check each locator on the live page and fall back (card-scoped, then positional) when not unique."""
+        verify: check each locator on the live page and fall back (card-scoped, then positional) when not unique.
+        details: for snapshot text, DOM attributes of buttons / links (snapshot.DETAILS_JS) to describe unnamed ones."""
         if isinstance(page_or_snapshot, str):
-            return self._snapshot(page_or_snapshot, step, max)
+            return self._snapshot(page_or_snapshot, step, max, details)
         page = page_or_snapshot
         if inspect.iscoroutinefunction(page.evaluate):
             raise TypeError("async Playwright page: use `await locator.afind(page, step)`")
@@ -258,6 +286,7 @@ class Locator:
         if not els:
             return self._finish(Hits(), [], docs, True)
         top, s = self._rank(step, docs, max)
+        top = self._ordinal_first(top, els, step, _css_slot)
         resolved = [resolve(page, els[i]) if verify else (locator(els[i]), None, "unverified") for i in top]
         hits, lines = self._page_hits(els, top, s, resolved)
         return self._finish(hits, lines, docs, verify and hits[0]["strategy"] not in STABLE)
@@ -273,6 +302,7 @@ class Locator:
         if not els:
             return self._finish(Hits(), [], docs, True)
         top, s = self._rank(step, docs, max)
+        top = self._ordinal_first(top, els, step, _css_slot)
         resolved = [await aresolve(page, els[i]) if verify else (locator(els[i]), None, "unverified") for i in top]
         hits, lines = self._page_hits(els, top, s, resolved)
         return self._finish(hits, lines, docs, verify and hits[0]["strategy"] not in STABLE)
@@ -346,12 +376,16 @@ def act(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
         except Exception:  # pages that never go idle (polling, websockets): fall back to polling the tree
             pass
         page.wait_for_timeout(int(POLL * 1000))
+        after = observe(page)
         while True:
-            after = observe(page)
             text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
-            if "No change detected" not in text or time.time() - t0 >= wait_max:
+            if time.time() - t0 >= wait_max:
                 return text
             page.wait_for_timeout(int(POLL * 1000))
+            nxt = observe(page)
+            if "No change detected" not in text and nxt.snapshot == after.snapshot:
+                return text  # changed, and settled
+            after = nxt
     finally:
         page.context.remove_listener("page", on_page)
         page.remove_listener("dialog", on_dialog)
@@ -381,12 +415,16 @@ async def aact(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss
         except Exception:
             pass
         await page.wait_for_timeout(int(POLL * 1000))
+        after = await aobserve(page)
         while True:
-            after = await aobserve(page)
             text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
-            if "No change detected" not in text or time.time() - t0 >= wait_max:
+            if time.time() - t0 >= wait_max:
                 return text
             await page.wait_for_timeout(int(POLL * 1000))
+            nxt = await aobserve(page)
+            if "No change detected" not in text and nxt.snapshot == after.snapshot:
+                return text
+            after = nxt
     finally:
         page.context.remove_listener("page", on_page)
         page.remove_listener("dialog", on_dialog)

@@ -20,6 +20,7 @@ STATES = ("checked", "disabled", "expanded", "selected", "pressed")
 GROUPS = {"dialog", "alertdialog", "alert", "menu", "listbox", "tooltip", "status"}
 MAX_LINES = 25
 REPLACED = 0.6  # more than this share of the tree changed: treat as a new view (SPA route change)
+REPLACED_MIN = 20  # ... on pages with at least this many elements
 
 
 Item = namedtuple("Item", "key line path node")
@@ -147,7 +148,7 @@ def outcome(before, after, ignore=frozenset(), waited=0.6, extra=()):
     lines, share = changes(before.snapshot, after.snapshot, ignore)
     if not lines:
         return "\n".join(head + [NO_CHANGE.format(secs=round(waited, 1))])
-    if share > REPLACED:
+    if share > REPLACED and len(_items(after.snapshot)) >= REPLACED_MIN:  # small pages: show the changes themselves
         return "\n".join(head + ["Same URL, but most of the page changed (new view)."] + summary(after) +
                          ["Use browser_find_element to locate elements on it."])
     more = f"\n(+{len(lines) - MAX_LINES} more changes)" if len(lines) > MAX_LINES else ""

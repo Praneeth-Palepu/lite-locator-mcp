@@ -21,6 +21,7 @@ Env: ELEM_RANK_HOME (folder with models/), PLAYWRIGHT_MCP (default "npx -y @play
 """
 import argparse
 import asyncio
+import json
 import os
 import shlex
 import sys
@@ -44,7 +45,8 @@ import numpy as np
 
 from .diff import Snap, noise, outcome, split_snapshot
 from .locate import POLL, WAIT_MAX
-from .snapshot import demote_orphans, elements, line
+from .snapshot import DETAILS_JS, demote_orphans, elements, line, merge_details, needs_details
+from .steps import clean_args, target_of
 
 ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover",
            "browser_press_key", "browser_drag", "browser_navigate", "browser_navigate_back", "browser_navigate_forward",
@@ -55,7 +57,8 @@ FIND = types.Tool(
     description=(
         "Find the page elements that match a test step, without reading the whole page. Give the step in plain "
         "words (e.g. 'Enter standard_user in the username field', 'Click Buy Now for the Halloween package'). "
-        "Returns a short list of candidate elements with their refs, best first; pass a ref as `target` to "
+        "Describing the element to act on works best ('the search box'). Returns a short list of candidate elements "
+        "with their refs, best first; pass only the ref (e.g. e54) as `target` to "
         "browser_click, browser_type etc. Prefer this over browser_snapshot. If none of the candidates fits the step, or "
         "the check needs the whole page or a whole list (counts, all items, totals), call browser_snapshot."),
     input_schema={"type": "object", "properties": {
@@ -71,9 +74,9 @@ class Finder:
     def __init__(self, lam):
         self.lam, self.rk = lam, None
 
-    def find(self, snapshot, step, cap=None):
+    def find(self, snapshot, step, cap=None, details=None):
         from .common import doc
-        els = elements(snapshot)
+        els = merge_details(elements(snapshot), details)
         if not els:
             return [], 0, 0, True
         docs = [doc(e) for e in els]
@@ -81,11 +84,13 @@ class Finder:
         if self.rk is None:
             from .lite import LiteRanker
             self.rk = LiteRanker()  # the ONNX models shipped in the package
-        s, lg = self.rk.rank(step, docs, key)
+        s, lg = self.rk.rank(target_of(step), docs, key)  # data-entry steps: rank the target, not the value
         k = self.rk.cut(lg, self.lam) or 5
         s = demote_orphans(np.array(s, dtype=float), els)
         k = min(k, cap) if cap else k
         top = sorted(range(len(els)), key=lambda i: -s[i])[:k]
+        from .locate import Locator
+        top = Locator._ordinal_first(top, els, step, lambda e: (e.get("list") or (None,))[0])
         # generic ambiguity check: the best pick shares its label with another element and has no card to tell
         # them apart -> the shortlist alone may mislead, so recommend the full snapshot
         best = els[top[0]]
@@ -135,7 +140,7 @@ async def main():
             pre, last = await state(), seen["last"]
             quiet = noise(last.snapshot, pre.snapshot) if pre and last and last.url == pre.url else frozenset()
             t0 = time.time()
-            res = await child.call_tool(name, args)
+            res = await child.call_tool(name, clean_args(name, args))
             text = text_of(res)
             rest, yaml, url, title = split_snapshot(text)
             after = Snap(url, title, yaml) if yaml else (None if res.is_error else await state())
@@ -143,10 +148,13 @@ async def main():
                 return res
             while True:
                 out = outcome(pre or last, after, quiet, time.time() - t0)
-                if "No change detected" not in out or time.time() - t0 >= WAIT_MAX:
+                if time.time() - t0 >= WAIT_MAX:
                     break
                 await asyncio.sleep(POLL)
-                after = (await state()) or after
+                nxt = (await state()) or after
+                if "No change detected" not in out and nxt.snapshot == after.snapshot:
+                    break  # changed and settled
+                after = nxt
             seen["last"] = after
             out = f"{rest}\n\n### Result\n{out}".strip()
             other = [c for c in res.content if getattr(c, "type", "") != "text"]  # e.g. images stay as they are
@@ -157,7 +165,7 @@ async def main():
             if params.name in ACTIONS and not a.full_snapshots:
                 return await action(params.name, args)
             if params.name != FIND.name:
-                res = await child.call_tool(params.name, args)
+                res = await child.call_tool(params.name, clean_args(params.name, args))
                 if params.name == "browser_snapshot":
                     remember(text_of(res))
                 return res
@@ -167,7 +175,16 @@ async def main():
             if snap.is_error or "```yaml" not in text:
                 return types.CallToolResult(content=[types.TextContent(type="text", text=text or "No page open.")],
                                             is_error=True)
-            cands, n, full, ambiguous = await asyncio.to_thread(finder.find, text, args.get("step", ""), args.get("max"))
+            details = None
+            if needs_details(elements(text)):  # unnamed buttons / links: one DOM call describes them
+                try:
+                    raw = text_of(await child.call_tool("browser_evaluate", {"function": DETAILS_JS}))
+                    res = raw.split("### Result", 1)[-1].split("###", 1)[0].strip()
+                    details = json.loads(json.loads(res)) if res.startswith('"') else json.loads(res)
+                except Exception:  # older Playwright MCP without browser_evaluate, or an unexpected answer
+                    details = None
+            cands, n, full, ambiguous = await asyncio.to_thread(finder.find, text, args.get("step", ""), args.get("max"),
+                                                                details)
             page = text.split("### Snapshot", 1)[0].strip()
             short = sum(len(line(e)) for e in cands) // 4
             out = [page, "", f"### Candidates for: {args.get('step', '')}", *[line(e) for e in cands], "",
@@ -177,7 +194,7 @@ async def main():
             out.append("If no candidate fits the step, call browser_snapshot for the full page.")
             return types.CallToolResult(content=[types.TextContent(type="text", text="\n".join(out))])
 
-        server = Server("lite-locator-mcp", version="0.1.4", on_list_tools=list_tools, on_call_tool=call_tool,
+        server = Server("lite-locator-mcp", version="0.1.5", on_list_tools=list_tools, on_call_tool=call_tool,
                         instructions="Use browser_find_element to locate elements for a step; browser_snapshot "
                                      "when no candidate fits or a check needs the whole page. Actions return what "
                                      "changed; if no change was detected, do not repeat a submit, payment or delete.")

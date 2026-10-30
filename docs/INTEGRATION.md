@@ -52,6 +52,10 @@ agent = create_react_agent(llm, tools,
 | ★2 `LOCATOR_HINT` | Tells the LLM: find first; full snapshot when nothing fits or for whole-page checks; don't repeat a submit/payment/delete after "no change" | leave it out |
 | ★3 `snapshot_hook` | The LLM no longer re-reads old full snapshots on every call (the stored history keeps them) | leave it out |
 
+To give the LLM only the tools test execution needs (fewer tokens on every call), pass the full list and name the
+ones to expose: `with_lite_locator(tools, keep={"browser_navigate", "browser_click", "browser_type", ...})`. Don't
+filter the list before wrapping: the library uses `browser_snapshot` and `browser_evaluate` itself.
+
 If your agent is a hand-written LangGraph graph instead of `create_react_agent`, use `trim_snapshots(messages)` on the
 messages you pass to the LLM (same effect as ★3).
 

@@ -59,7 +59,8 @@ browser_click(ref="e54")  ->  ### Result
 ```
 
 Your Playwright MCP server, its version and flags stay as they are. `with_lite_locator(tools, diffs=False)` keeps the
-action tools unchanged. Full example: [`examples/quickstart_langgraph.py`](examples/quickstart_langgraph.py)
+action tools unchanged; `with_lite_locator(tools, keep={"browser_navigate", "browser_click", ...})` shows the LLM only
+those tools (tool definitions are re-sent on every call) while the library still uses the others it needs. Full example: [`examples/quickstart_langgraph.py`](examples/quickstart_langgraph.py)
 (Azure OpenAI or a local Ollama model).
 
 ## 2. Your own Python code with a Playwright page

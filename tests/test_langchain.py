@@ -56,3 +56,51 @@ def test_trim_keeps_only_latest_snapshot():
     out = trim_snapshots(msgs)
     assert "removed" in out[1].content and "```yaml" in out[2].content and msgs[1].content == PAGE1
     assert snapshot_hook({"messages": msgs})["llm_input_messages"][1].content == out[1].content
+
+
+def test_pasted_candidate_line_is_reduced_to_its_ref(loc):
+    seen = {}
+
+    def browser_click(ref: str) -> str:
+        seen["ref"] = ref
+        return PAGE2
+
+    tools = [StructuredTool.from_function(lambda: PAGE1, name="browser_snapshot", description="snapshot"),
+             StructuredTool.from_function(browser_click, name="browser_click", description="click")]
+    by = {t.name: t for t in with_lite_locator(tools, locator=loc)}
+    by["browser_click"].invoke({"ref": 'button "Login" [ref=e2]'})
+    assert seen["ref"] == "e2"
+
+
+def test_unnamed_button_described_through_browser_evaluate(loc):
+    import json as _json
+    page = HEAD + '- button "Increase quantity" [ref=e1]\n- button [ref=e2]\n```'
+    details = {"button": [{"testid": "increase-quantity"}, {"testid": "add-to-cart"}], "link": []}
+    calls = []
+
+    def browser_evaluate(function: str) -> str:
+        calls.append(function)
+        return "### Result\n" + _json.dumps(_json.dumps(details))
+
+    tools = [StructuredTool.from_function(lambda: page, name="browser_snapshot", description="snapshot"),
+             StructuredTool.from_function(browser_evaluate, name="browser_evaluate", description="evaluate")]
+    by = {t.name: t for t in with_lite_locator(tools, locator=loc)}
+    out = by["browser_find_element"].invoke({"step": "Add the product to the cart"})
+    first = next(x for x in out.splitlines() if "[ref=" in x)
+    assert "[ref=e2]" in first and "add to cart" in first
+    by["browser_find_element"].invoke({"step": "add to cart"})
+    assert len(calls) == 1  # one DOM call per page state
+
+
+def test_keep_limits_what_the_llm_sees_but_not_what_the_library_uses(loc):
+    import json as _json
+    page = HEAD + '- button "Increase quantity" [ref=e1]\n- button [ref=e2]\n```'
+    details = {"button": [{"testid": "increase-quantity"}, {"testid": "add-to-cart"}], "link": []}
+    tools = [StructuredTool.from_function(lambda: page, name="browser_snapshot", description="snapshot"),
+             StructuredTool.from_function(lambda function: "### Result\n" + _json.dumps(_json.dumps(details)),
+                                          name="browser_evaluate", description="evaluate"),
+             StructuredTool.from_function(lambda ref: page, name="browser_click", description="click")]
+    out = with_lite_locator(tools, locator=loc, keep={"browser_click"})
+    assert [t.name for t in out] == ["browser_find_element", "browser_click"]
+    first = next(x for x in out[0].invoke({"step": "Add the product to the cart"}).splitlines() if "[ref=" in x)
+    assert "[ref=e2]" in first  # browser_evaluate was still used although the LLM doesn't see it

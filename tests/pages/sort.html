@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Results</title></head><body>
+<main><label>Sort <select id="sort" aria-label="sort"><option>Name (A - Z)</option><option>Price (Low - High)</option></select></label>
+<ul id="list"><li><a href="#b">Bolt cutters $48.41</a></li><li><a href="#c">Combination pliers $14.15</a></li></ul></main>
+<script>
+document.getElementById('sort').onchange = () => setTimeout(() => {  // the list re-renders a moment later
+  document.getElementById('list').innerHTML = '<li><a href="#c">Combination pliers $14.15</a></li><li><a href="#b">Bolt cutters $48.41</a></li>';
+}, 700);
+</script></body></html>

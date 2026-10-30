@@ -106,3 +106,30 @@ def test_to_locator_builds_live_locators_without_eval(page, site, loc):
 def test_hint_covers_whole_page_checks_and_no_repeat():
     from lite_locator.langchain import LOCATOR_HINT
     assert "whole page" in LOCATOR_HINT and "do not repeat" in LOCATOR_HINT
+
+
+def test_search_step_finds_the_search_box_not_the_value(page, site, loc):
+    page.goto(site + "/search.html")  # "pliers" is also a category, an image and a product name here
+    for step in ("Search for pliers", "Type pliers in the search box"):
+        top = loc.find(page, step)[0]
+        assert top["role"] in ("textbox", "searchbox") and "search" in top["locator"].lower(), (step, top["doc"])
+    out = act(page, loc.find(page, "Search for pliers")[0], "fill", "pliers")
+    assert "pliers" in out
+
+
+def test_set_quantity(page, site, loc):
+    page.goto(site + "/search.html")
+    assert loc.find(page, "Set the quantity to 2")[0]["name"] == "Quantity"
+
+
+def test_late_list_update_after_a_change_is_included(page, site, loc):
+    page.goto(site + "/sort.html")  # selecting changes the dropdown at once and re-orders the list 0.7 s later
+    out = act(page, loc.find(page, "Sort the results by price, low to high")[0], "select", "Price (Low - High)")
+    assert "Price (Low - High)" in out and "Combination pliers" in out
+
+
+def test_ordinal_step_on_a_page(page, site, loc):
+    page.goto(site + "/results.html")
+    assert "Long Nose Pliers" in loc.find(page, "Open the first product")[0]["name"]
+    assert "$12.01" in loc.find(page, "open the last product")[0]["doc"]
+    assert loc.find(page, "Enter first name")[0]["role"] == "textbox"

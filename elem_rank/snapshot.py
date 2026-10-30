@@ -43,6 +43,23 @@ def _unquote(t):
     return t
 
 
+def _unquote_key(b):
+    """A node line that YAML had to quote because its text contains ': ' ('link "CO₂: A B C" [ref=e9]':) or starts
+    with a special character: remove the quotes (keeping the trailing ':' of a node with children)."""
+    if len(b) >= 2 and b[0] in "'\"":
+        q = b[0]
+        tail = ":" if b.endswith(q + ":") else ""
+        inner = b[1:len(b) - 1 - len(tail)] if b.endswith(q + tail) else None
+        if inner is not None:
+            if q == "'":
+                return inner.replace("''", "'") + tail
+            try:
+                return json.loads(q + inner + q) + tail
+            except ValueError:
+                return inner + tail
+    return b
+
+
 def parse_tree(snapshot):
     """Nodes of the YAML block, nested by indentation."""
     body = snapshot.split("```yaml", 1)[1].split("```", 1)[0] if "```yaml" in snapshot else snapshot
@@ -62,7 +79,7 @@ def parse_tree(snapshot):
         if b.startswith("text:"):
             parent.children.append(Node("text", "", None, {}, _unquote(b[5:]), parent))
             continue
-        n = NODE.match(b)
+        n = NODE.match(_unquote_key(b))
         if not n:
             continue
         attrs = {k: (v if v is not None else True) for k, v in ATTR.findall(n["attrs"] or "")}
@@ -104,6 +121,7 @@ def _noise(n):
     return t.lower().strip(" ,.;:&|-") in {"and", "or", "the", "of", "&", ""}
 
 
+CHOICE = {"combobox", "listbox", "radiogroup", "menu", "tablist"}
 ORPHAN_IN = {"banner", "navigation"}
 ORPHAN_PENALTY = 2.0  # fusion-score handicap: text without its own element wins only when no real element fits
 
@@ -170,7 +188,11 @@ def elements(snapshot):
             if not land and a.role in LANDMARKS:
                 land = a.role + (":" + a.name[:40] if a.name else "")
             a = a.parent
-        out.append({"ref": n.ref, "role": n.role, "name": n.name, "text": n.label()[:200],
+        text = n.label()
+        if n.role in CHOICE:  # dropdowns / lists: their options are child nodes; the step usually names one of them
+            opts = [c.label() for c in n.walk() if c.role in ("option", "menuitem", "radio") and c.label()]
+            text = (text + " " if text and text != n.name else "") + " ".join(opts)
+        out.append({"ref": n.ref, "role": n.role, "name": n.name, "text": text[:200],
                     "attrs": {"href": n.href} if n.href else {}, "near": _near(n), "heading": heading[:80],
                     "landmark": land, "kind": "interactive" if n.role in INTERACTIVE or n.attrs.get("cursor") else "text",
                     "_node": n})
@@ -194,9 +216,27 @@ def elements(snapshot):
             have.add(t.lower())
             out.append({"ref": ref, "role": "text", "name": "", "text": t, "attrs": {}, "near": _near(n),
                         "heading": "", "landmark": land, "kind": "text", "orphan": True})
+    for e in out:  # position in a repeated list (cards, results): for "open the first product"
+        n = e.get("_node")
+        if n is not None and e["role"] == "link":
+            e["list"] = _list_slot(n)
     for e in out:
         e.pop("_node", None)
     return out
+
+
+def _list_slot(node, depth=4):
+    """(id of the list container, position) when the node, or one of its near ancestors, is one of 3+ siblings of
+    the same role: a card in a grid or an item in a result list."""
+    a = node
+    for _ in range(depth):
+        if a.parent is None:
+            break
+        same = [c for c in a.parent.children if c.role == a.role]
+        if len(same) >= 3:
+            return id(a.parent), same.index(a)
+        a = a.parent
+    return None
 
 
 def line(e):
@@ -213,3 +253,47 @@ def line(e):
     elif e["heading"]:
         ctx.append(f'section: {e["heading"]}')
     return s + (f'  ({"; ".join(ctx)})' if ctx else "")
+
+
+# ---------- unnamed buttons / links (icon buttons, controls whose text is hidden from the accessibility tree) ----------
+
+DETAIL_ROLES = {"button": "button, [role=button], input[type=button], input[type=submit], input[type=reset]",
+                "link": "a[href], [role=link]"}
+DETAILS_JS = """() => {
+  const sels = %s;
+  const vis = (el) => { const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
+  const out = {};
+  for (const [role, sel] of Object.entries(sels)) {
+    out[role] = [...document.querySelectorAll(sel)].filter(vis).map(el => ({
+      testid: el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa') || '',
+      id: el.id || '', title: el.getAttribute('title') || '', text: (el.innerText || el.value || '').trim().slice(0, 80),
+      icon: [...el.querySelectorAll('[class*=icon], [class*=fa-], svg')].map(i => (i.getAttribute('class') || '')
+        .split(/\\s+/).filter(c => /icon|fa-|cart|search|user|menu|close/i.test(c)).join(' ')).join(' ').slice(0, 60),
+      href: el.getAttribute('href') || '' }));
+  }
+  return JSON.stringify(out);
+}""" % json.dumps(DETAIL_ROLES)
+
+
+def needs_details(els):
+    return any(e["role"] in DETAIL_ROLES and not e["name"] and not e["text"] for e in els)
+
+
+def merge_details(els, details):
+    """Describe unnamed buttons / links from their DOM attributes (test id, id, title, inner text, icon classes).
+    The snapshot's and the page's elements of a role are matched in page order, and only when the counts agree
+    exactly; otherwise nothing is added (a wrong description would be worse than none)."""
+    for role, items in (details or {}).items():
+        snap = [e for e in els if e["role"] == role and not e.get("orphan")]
+        if len(snap) != len(items):
+            continue
+        for e, d in zip(snap, items, strict=True):
+            if e["name"] or e["text"]:
+                continue
+            words = d.get("text") or d.get("title") or " ".join(
+                x for x in (d.get("testid"), d.get("id"), d.get("icon")) if x).replace("-", " ").replace("_", " ")
+            if words:
+                e["text"] = words[:80]
+                e["attrs"] = {**e.get("attrs", {}), **{k: d[k] for k in ("testid", "id", "title") if d.get(k)}}
+    return els

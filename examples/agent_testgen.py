@@ -86,6 +86,7 @@ async def main():
     ap.add_argument("--no-lite", action="store_true", help="plain Playwright MCP, for comparison")
     ap.add_argument("--all-tools", action="store_true", help="give the LLM every Playwright MCP tool (default: only "
                     "the ones test execution needs; each tool definition is sent with every LLM call)")
+    ap.add_argument("--verbose", action="store_true", help="print every tool call and the start of its result")
     ap.add_argument("--out", default="generated.spec.js")
     a = ap.parse_args()
     case = open(a.case).read().strip()
@@ -93,17 +94,22 @@ async def main():
 
     async with playwright_mcp(a.mcp_cmd, a.mcp_url) as session:
         tools = await load_mcp_tools(session)
-        if not a.all_tools:  # tool definitions are re-sent on every LLM call: keep only what test execution needs
-            tools = [t for t in tools if t.name in NEEDED]
+        keep = None if a.all_tools else NEEDED  # tool definitions are re-sent on every LLM call: expose only these
         if a.no_lite:
-            agent = create_react_agent(make_llm(), tools, prompt=SYSTEM)
+            agent = create_react_agent(make_llm(), [t for t in tools if keep is None or t.name in keep], prompt=SYSTEM)
         else:
-            tools = with_lite_locator(tools)                            # find tool + actions return what changed
+            tools = with_lite_locator(tools, keep=keep)    # the full list goes in; the LLM sees find + `keep`
             agent = create_react_agent(make_llm(), tools, prompt=LOCATOR_HINT + SYSTEM,
                                        pre_model_hook=snapshot_hook)    # old full snapshots are not re-read
         result = await agent.ainvoke({"messages": [("user", case)]}, {"recursion_limit": 60})
 
     msgs = result["messages"]
+    if a.verbose:
+        for m in msgs:
+            for c in getattr(m, "tool_calls", None) or []:
+                print(f"\n>> {c['name']}({c['args']})")
+            if getattr(m, "type", "") == "tool":
+                print("   " + str(m.content)[-700:].replace("\n", "\n   "))
     used = [m.usage_metadata for m in msgs if getattr(m, "usage_metadata", None)]
     tools_called = [m.name for m in msgs if getattr(m, "type", "") == "tool"]
     open(a.out, "w").write(script_from(msgs, title))

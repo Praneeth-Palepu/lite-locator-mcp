@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Toolshop</title></head><body>
+<header><form role="search" onsubmit="event.preventDefault(); document.getElementById('res').textContent = 'Searched for: ' + document.getElementById('q').value">
+  <input id="q" data-test="search-query" placeholder="Search" aria-label="Search"><button data-test="search-submit">Search</button></form></header>
+<aside><h4>By category:</h4><label><input type="checkbox" name="category"> Pliers</label><label><input type="checkbox" name="category"> Hammer</label></aside>
+<main><div class="card"><img alt="Pliers" src="data:,"><h5>Combination Pliers</h5><span>$14.15</span></div>
+<div class="card"><img alt="Hammer" src="data:,"><h5>Claw Hammer</h5><span>$9.99</span></div>
+<label>Quantity <input type="number" id="qty" value="1" aria-label="Quantity"></label>
+<div id="res"></div></main></body></html>

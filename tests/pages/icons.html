@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Product</title></head><body>
+<main><h1>Slip Joint Pliers</h1><span>$9.17</span>
+<button data-test="increase-quantity" aria-label="Increase quantity">+</button>
+<button data-test="add-to-cart" id="btn-add-to-cart"><svg class="icon-cart" width="16" height="16"></svg></button>
+<button data-test="add-to-favorites"><svg class="icon-heart" width="16" height="16"></svg></button>
+<div id="msg"></div></main>
+<script>document.getElementById('btn-add-to-cart').onclick = () => { document.getElementById('msg').innerHTML = '<div role="alert">Product added to shopping cart.</div>'; };</script>
+</body></html>

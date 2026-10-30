@@ -53,3 +53,77 @@ def test_tree_nesting():
     root = parse_tree(SNAP)
     main = next(n for n in root.walk() if n.role == "main")
     assert any(n.name == "Login" for n in main.walk())
+
+
+def test_dropdown_options_are_part_of_its_text(loc):
+    snap = """- main [ref=e1]:
+  - paragraph [ref=e2]: 4 products found for 'pliers'
+  - combobox "sort" [ref=e3]:
+    - option "Name (A - Z)"
+    - option "Price (High - Low)"
+    - option "Price (Low - High)"
+  - checkbox "Measures" [ref=e4]
+  - button "Compare" [ref=e5]
+"""
+    els = {e["ref"]: e for e in elements(snap)}
+    assert "Price (Low - High)" in els["e3"]["text"]
+    assert loc.find(snap, "Sort the results by price, low to high")[0]["ref"] == "e3"
+
+
+def test_yaml_quoted_node_lines_are_parsed():
+    snap = """- main [ref=e1]:
+  - 'link "Combination Pliers Compare CO₂: A B C $14.15" [ref=e196] [cursor=pointer]':
+    - /url: /product/1
+    - img "Combination Pliers" [ref=e198]
+  - 'button "It''s: here" [ref=e5]'
+"""
+    els = {e["ref"]: e for e in elements(snap)}
+    assert els["e196"]["role"] == "link" and els["e196"]["name"].startswith("Combination Pliers")
+    assert els["e196"]["attrs"].get("href") == "/product/1"
+    assert els["e5"]["name"] == "It's: here"
+
+
+RESULTS = """- main [ref=e1]:
+  - heading "4 products found" [level=1] [ref=e2]
+  - generic [ref=e3]:
+    - generic [ref=e10]:
+      - link "Long Nose Pliers $14.24" [ref=e11]
+    - generic [ref=e20]:
+      - link "Slip Joint Pliers $9.17" [ref=e21]
+    - generic [ref=e30]:
+      - link "Combination Pliers $14.15" [ref=e31]
+    - generic [ref=e40]:
+      - link "Pliers $12.01" [ref=e41]
+  - textbox "First name" [ref=e50]
+"""
+
+
+def test_ordinal_steps_pick_by_position(loc):
+    assert loc.find(RESULTS, "Open the first product in the results")[0]["ref"] == "e11"
+    assert loc.find(RESULTS, "click the last product")[0]["ref"] == "e41"
+    assert loc.find(RESULTS, "Enter first name")[0]["ref"] == "e50"
+
+
+UNNAMED = """- main [ref=e1]:
+  - heading "Slip Joint Pliers" [level=1] [ref=e2]
+  - button "Increase quantity" [ref=e3]
+  - button [ref=e4] [cursor=pointer]
+  - button [ref=e5] [cursor=pointer]
+"""
+DETAILS = {"button": [{"testid": "increase-quantity", "text": "+"}, {"testid": "add-to-cart", "id": "btn-add-to-cart"},
+                      {"testid": "add-to-favorites", "icon": "icon-heart"}]}
+
+
+def test_unnamed_buttons_described_from_dom(loc):
+    from elem_rank.snapshot import merge_details, needs_details
+    els = elements(UNNAMED)
+    assert needs_details(els)
+    by = {e["ref"]: e for e in merge_details(els, DETAILS)}
+    assert by["e4"]["text"] == "add to cart btn add to cart" and by["e3"]["name"] == "Increase quantity"
+    assert loc.find(UNNAMED, "Add the product to the cart", details=DETAILS)[0]["ref"] == "e4"
+
+
+def test_unnamed_details_skipped_when_counts_differ():
+    from elem_rank.snapshot import merge_details
+    by = {e["ref"]: e for e in merge_details(elements(UNNAMED), {"button": DETAILS["button"][:2]})}
+    assert by["e4"]["text"] == "" and by["e5"]["text"] == ""
