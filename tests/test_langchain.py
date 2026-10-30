@@ -9,8 +9,10 @@ from langchain_core.tools import StructuredTool  # noqa: E402
 
 from lite_locator.langchain import snapshot_hook, trim_snapshots, with_lite_locator  # noqa: E402
 
-PAGE1 = "- Page URL: http://x/\n- Page Title: Login\n- Page Snapshot\n```yaml\n- textbox \"Username\" [ref=e1]\n- button \"Login\" [ref=e2]\n```"
-PAGE2 = "- Page URL: http://x/\n- Page Title: Login\n- Page Snapshot\n```yaml\n- textbox \"Username\" [ref=e1]\n- button \"Login\" [ref=e2]\n- alert [ref=e3]:\n  - text: Wrong password\n```"
+HEAD = "- Page URL: http://x/\n- Page Title: Login\n- Page Snapshot\n```yaml\n"
+FORM = '- textbox "Username" [ref=e1]\n- button "Login" [ref=e2]\n'
+PAGE1 = HEAD + FORM + "```"
+PAGE2 = HEAD + FORM + "- alert [ref=e3]:\n  - text: Wrong password\n```"
 
 
 def fake_tools(state):

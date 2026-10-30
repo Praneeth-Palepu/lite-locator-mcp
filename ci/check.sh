@@ -42,16 +42,22 @@ WHEEL=$(ls dist/lite_locator_mcp-$VER-py3-none-any.whl 2>/dev/null)
 step "package metadata (twine check)" $T/twine check dist/*$VER*
 step "wheel contents (models, no data/secrets)" bash -c "unzip -l $WHEEL | grep -q models-lite/bi.onnx && unzip -l $WHEEL | grep -q models-lite/ce.onnx && ! unzip -l $WHEEL | grep -qE '\.env|\.key|data/|\.pt\$' && echo ok"
 
-# main environment: latest dependencies + the [mcp] extra
+# 1) proxy environment: latest dependencies + the [mcp] extra (mcp 2.x)
 venv "$WORK/main"; M=$WORK/main/bin
-step "install wheel [mcp] in a fresh venv" bash -c "$M/pip install -q '$WHEEL[mcp]' pytest playwright langchain-core langchain-mcp-adapters && $M/python -m playwright install chromium >/dev/null && $M/pip check"
-step "dependency vulnerabilities (pip-audit)" $T/pip-audit --path "$($M/python -c 'import site;print(site.getsitepackages()[0])')" --progress-spinner off
-step "tests: unit + browser + LangChain + MCP (latest deps)" bash -c "cd '$WORK' && $M/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests'"
+step "install wheel [mcp] in a fresh venv" bash -c "$M/pip install -q '$WHEEL[mcp]' pytest playwright langchain-core && $M/python -m playwright install chromium >/dev/null && $M/pip check"
+step "dependency vulnerabilities, proxy env (pip-audit)" $T/pip-audit --path "$($M/python -c 'import site;print(site.getsitepackages()[0])')" --progress-spinner off
+step "tests: unit + browser + proxy end to end (mcp 2.x)" bash -c "cd '$WORK' && $M/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests'"
 
-# compatibility: an office-like environment that must keep mcp 1.3 untouched
+# 2) LangChain environment: the library next to the latest langchain-mcp-adapters (which needs mcp 1.x)
+venv "$WORK/lc"; L=$WORK/lc/bin
+step "install wheel next to latest langchain-mcp-adapters" bash -c "$L/pip install -q '$WHEEL' 'mcp<2' langchain-core langchain-mcp-adapters pytest playwright && $L/pip check"
+step "dependency vulnerabilities, LangChain env (pip-audit)" $T/pip-audit --path "$($L/python -c 'import site;print(site.getsitepackages()[0])')" --progress-spinner off
+step "tests: LangChain wrapper + real Playwright MCP" bash -c "cd '$WORK' && $L/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' -k 'not test_proxy_find_and_diff'"
+
+# 3) compatibility: an office-like environment that must keep mcp 1.3 untouched
 venv "$WORK/compat"; C=$WORK/compat/bin
 step "compat: install next to mcp 1.3 (unchanged)" bash -c "$C/pip install -q 'mcp==1.3.0' 'pydantic<2.11' 'langchain-core<0.4' 'langchain-mcp-adapters==0.0.4' pytest playwright && $C/pip install -q '$WHEEL' && $C/pip show mcp | grep -q 'Version: 1.3.0' && $C/pip check && echo 'mcp 1.3.0 kept'"
-step "compat: tests (mcp 1.3 env, without the proxy)" bash -c "cd '$WORK' && $C/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' --deselect '$REPO/tests/test_mcp.py::test_proxy_find_and_diff' -k 'not test_langchain_with_real_mcp'"
+step "compat: tests (mcp 1.3 + Playwright MCP 0.0.29)" bash -c "cd '$WORK' && TEST_PW_MCP=@playwright/mcp@0.0.29 $C/pytest -q -p no:cacheprovider --rootdir '$REPO/tests' '$REPO/tests' -k 'not test_proxy_find_and_diff'"
 
 if [ "${QUICK:-0}" = "1" ]; then rows+=("| ranking quality gate | ⏭ skipped (QUICK) | | |"); FAIL=1
 else step "ranking quality gate (hard held-out steps)" $M/python ci/quality_gate.py; fi

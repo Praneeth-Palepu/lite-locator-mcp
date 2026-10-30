@@ -14,4 +14,5 @@ def cut_features(lg):
     cum = np.cumsum(p)
     gaps = z[:6][:-1] - z[1:6]
     ent = -(p * np.log(p + 1e-12)).sum()
-    return np.concatenate([p[:10], cum[[c - 1 for c in CUTS]], np.clip(gaps, -10, 10) / 10, [ent / 4, z[0] / 10]]).astype(np.float32)
+    feats = [p[:10], cum[[c - 1 for c in CUTS]], np.clip(gaps, -10, 10) / 10, [ent / 4, z[0] / 10]]
+    return np.concatenate(feats).astype(np.float32)

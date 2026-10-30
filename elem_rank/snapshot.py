@@ -99,7 +99,9 @@ def _noise(n):
     if n.role in INTERACTIVE or n.attrs.get("cursor"):
         return False
     t = n.label().strip()
-    return len(t) < 3 or bool(re.fullmatch(r"[\d\s¥$€£₹.,:;/|()+%-]+", t)) or t.lower().strip(" ,.;:&|-") in {"and", "or", "the", "of", "&", ""}
+    if len(t) < 3 or re.fullmatch(r"[\d\s¥$€£₹.,:;/|()+%-]+", t):
+        return True
+    return t.lower().strip(" ,.;:&|-") in {"and", "or", "the", "of", "&", ""}
 
 
 ORPHAN_IN = {"banner", "navigation"}
@@ -129,9 +131,7 @@ def orphan_texts(root, anywhere=False):
             if a.role in INTERACTIVE:
                 break  # text inside a link / button belongs to that element
             if a.ref and ref is None:
-                if a.label().strip().lower() == n.text.strip().lower():
-                    break  # the ancestor element already carries this text: not an orphan
-                ref = a.ref
+                ref = a.ref  # duplicates of real candidates are removed in elements() (same text)
             if a.role in ORPHAN_IN:
                 land = a.role + (":" + a.name[:40] if a.name else "")
                 break
@@ -139,6 +139,20 @@ def orphan_texts(root, anywhere=False):
         if land or anywhere:  # anywhere: also pages whose header has no landmark at all (Shanghai Disney)
             out.append((n, n.text.strip(), land or "", ref))
     return out
+
+
+def card_of(node, members):
+    """Title of the card that holds `node`: the largest ancestor containing no other of `members` (look-alikes such
+    as the other "Add to cart" buttons), titled by its first heading, else its first other meaningful label."""
+    box = node
+    while box.parent is not None and sum(m in set(box.parent.walk()) for m in members) == 1:
+        box = box.parent
+    if box is node:
+        return ""
+    own = node.label()
+    return _first_heading(box, node) or next(
+        (d.label() for d in box.walk() if d is not node and d.label() and d.label() != own and len(d.label()) >= 6
+         and not re.fullmatch(r"[\d\s¥$€£₹.,:/-]+", d.label()) and node not in set(d.walk())), "")
 
 
 def elements(snapshot):
@@ -171,16 +185,7 @@ def elements(snapshot):
             continue
         members = [out[i]["_node"] for i in idxs]
         for i in idxs:
-            box = out[i]["_node"]
-            while box.parent is not None and sum(m in set(box.parent.walk()) for m in members) == 1:
-                box = box.parent
-            if box is out[i]["_node"]:
-                continue
-            own = out[i]["text"]
-            title = _first_heading(box, out[i]["_node"]) or next(
-                (d.label() for d in box.walk() if d is not out[i]["_node"] and d.label() and d.label() != own
-                 and len(d.label()) >= 6 and not re.fullmatch(r"[\d\s¥$€£₹.,:/-]+", d.label())
-                 and out[i]["_node"] not in set(d.walk())), "")
+            title = card_of(out[i]["_node"], members)
             if title:
                 out[i]["card"] = title[:90]
     have = {e["text"].lower() for e in out}

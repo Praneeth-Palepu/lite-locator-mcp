@@ -1,10 +1,12 @@
 """Page API on local pages: find() picks the right element, locators work live, act() reports the change."""
 from lite_locator import act
+from elem_rank.locate import to_locator
 
 
 def test_login_fields_and_button(page, site, loc):
     page.goto(site + "/login.html")
-    assert loc.find(page, "Enter standard_user in the username field")[0]["locator"] == "page.locator('[data-test=\"username\"]')"
+    top = loc.find(page, "Enter standard_user in the username field")[0]
+    assert top["locator"] == "page.locator('[data-test=\"username\"]')"
     assert "password" in loc.find(page, "type the password")[0]["locator"]
     assert "login" in loc.find(page, "click the login button")[0]["locator"]
 
@@ -50,3 +52,57 @@ def test_tokens_are_reported(page, site, loc):
     page.goto(site + "/grid.html")
     h = loc.find(page, "open the cart")
     assert 0 < h.tokens <= h.full_tokens and h.total > len(h) - 1
+
+
+def test_slow_response_is_waited_for(page, site, loc):
+    page.goto(site + "/slow.html")  # the page answers 1.5 s after the click
+    out = act(page, loc.find(page, "click pay now")[0], "click")
+    assert "Payment received" in out and "No change" not in out
+
+
+def test_no_change_warns_against_repeating(page, site, loc):
+    page.goto(site + "/login.html")
+    out = act(page, loc.find(page, "click Help")[0], "hover", wait_max=1)
+    assert out.startswith("No change detected") and "do not repeat" in out
+
+
+def test_new_tab_is_reported(page, site, loc):
+    page.goto(site + "/popup.html")
+    out = act(page, loc.find(page, "open products in a new tab")[0], "click")
+    assert "A new tab opened" in out and "grid.html" in out
+
+
+def test_dialog_is_reported_and_dismissed_by_default(page, site, loc):
+    page.goto(site + "/popup.html")
+    out = act(page, loc.find(page, "click delete item")[0], "click", wait_max=1)
+    assert "Delete this item?" in out and "dismissed" in out and "Deleted" not in out
+
+
+def test_dialog_can_be_accepted(page, site, loc):
+    page.goto(site + "/popup.html")
+    out = act(page, loc.find(page, "click delete item")[0], "click", dialog="accept")
+    assert "accepted" in out and "Deleted" in out
+
+
+def test_busy_page_changes_are_filtered(page, site, loc):
+    page.goto(site + "/carousel.html")  # a ticker changes every 200 ms
+    out = act(page, loc.find(page, "click subscribe")[0], "click")
+    assert "Thanks for subscribing" in out and "Headline" not in out
+
+
+def test_change_lines_name_the_card(page, site, loc):
+    page.goto(site + "/grid.html")
+    out = act(page, loc.find(page, "Add the Sauce Labs Onesie to the cart")[0], "click")
+    assert "Remove" in out and "card: Sauce Labs Onesie" in out
+
+
+def test_to_locator_builds_live_locators_without_eval(page, site, loc):
+    page.goto(site + "/grid.html")
+    h = loc.find(page, "Add the Sauce Labs Backpack to the cart")[0]
+    assert to_locator(page, h).count() == 1
+    assert to_locator(page, page.locator("#cart")).count() == 1  # a Locator passes through
+
+
+def test_hint_covers_whole_page_checks_and_no_repeat():
+    from lite_locator.langchain import LOCATOR_HINT
+    assert "whole page" in LOCATOR_HINT and "do not repeat" in LOCATOR_HINT

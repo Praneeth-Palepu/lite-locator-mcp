@@ -24,6 +24,7 @@ import asyncio
 import os
 import shlex
 import sys
+import time
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -41,7 +42,8 @@ except (ImportError, PackageNotFoundError):  # the library API needs no MCP (any
 
 import numpy as np
 
-from .diff import Snap, outcome, split_snapshot
+from .diff import Snap, noise, outcome, split_snapshot
+from .locate import POLL, WAIT_MAX
 from .snapshot import demote_orphans, elements, line
 
 ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover",
@@ -54,8 +56,8 @@ FIND = types.Tool(
         "Find the page elements that match a test step, without reading the whole page. Give the step in plain "
         "words (e.g. 'Enter standard_user in the username field', 'Click Buy Now for the Halloween package'). "
         "Returns a short list of candidate elements with their refs, best first; pass a ref as `target` to "
-        "browser_click, browser_type etc. Prefer this over browser_snapshot. If none of the candidates fits the step, call "
-        "browser_snapshot to see the full page."),
+        "browser_click, browser_type etc. Prefer this over browser_snapshot. If none of the candidates fits the step, or "
+        "the check needs the whole page or a whole list (counts, all items, totals), call browser_snapshot."),
     input_schema={"type": "object", "properties": {
         "step": {"type": "string", "description": "The test step or action, in plain words"},
         "max": {"type": "integer", "description": "Optional cap on the number of candidates"}},
@@ -132,17 +134,30 @@ async def main():
             if yaml:
                 seen["last"] = Snap(url, title, yaml)
 
+        async def state():
+            _, yaml, url, title = split_snapshot(text_of(await child.call_tool("browser_snapshot", {})))
+            return Snap(url, title, yaml) if yaml else None
+
         async def action(name, args):
-            """Forward an action; return what changed instead of the full snapshot."""
+            """Forward an action; return what changed instead of the full snapshot. Late changes (slow server
+            responses) are waited for up to WAIT_MAX s; positions that change by themselves are ignored."""
+            pre, last = await state(), seen["last"]
+            quiet = noise(last.snapshot, pre.snapshot) if pre and last and last.url == pre.url else frozenset()
+            t0 = time.time()
             res = await child.call_tool(name, args)
             text = text_of(res)
             rest, yaml, url, title = split_snapshot(text)
-            if not yaml and not res.is_error:  # --snapshot-mode none or a version that sends no snapshot
-                _, yaml, url, title = split_snapshot(text_of(await child.call_tool("browser_snapshot", {})))
-            if not yaml:
+            after = Snap(url, title, yaml) if yaml else (None if res.is_error else await state())
+            if after is None:
                 return res
-            before, seen["last"] = seen["last"], Snap(url, title, yaml)
-            out = f"{rest}\n\n### Result\n{outcome(before, seen['last'])}".strip()
+            while True:
+                out = outcome(pre or last, after, quiet, time.time() - t0)
+                if "No change detected" not in out or time.time() - t0 >= WAIT_MAX:
+                    break
+                await asyncio.sleep(POLL)
+                after = (await state()) or after
+            seen["last"] = after
+            out = f"{rest}\n\n### Result\n{out}".strip()
             other = [c for c in res.content if getattr(c, "type", "") != "text"]  # e.g. images stay as they are
             return types.CallToolResult(content=[types.TextContent(type="text", text=out)] + other, is_error=res.is_error)
 
@@ -171,9 +186,10 @@ async def main():
             out.append("If no candidate fits the step, call browser_snapshot for the full page.")
             return types.CallToolResult(content=[types.TextContent(type="text", text="\n".join(out))])
 
-        server = Server("lite-locator-mcp", version="0.1.3", on_list_tools=list_tools, on_call_tool=call_tool,
+        server = Server("lite-locator-mcp", version="0.1.4", on_list_tools=list_tools, on_call_tool=call_tool,
                         instructions="Use browser_find_element to locate elements for a step; browser_snapshot "
-                                     "only when no candidate fits.")
+                                     "when no candidate fits or a check needs the whole page. Actions return what "
+                                     "changed; if no change was detected, do not repeat a submit, payment or delete.")
         async with stdio_server() as (sr, sw):
             await server.run(sr, sw, server.create_initialization_options())
 

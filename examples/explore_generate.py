@@ -24,7 +24,7 @@ from urllib.parse import urljoin, urlparse
 from playwright.sync_api import expect, sync_playwright
 
 from lite_locator import Locator
-from elem_rank.locate import JS
+from elem_rank.locate import JS, to_locator
 
 ACTIONS = ("fill", "click", "select", "check", "assert_visible", "assert_text", "assert_url")
 
@@ -116,13 +116,13 @@ def ground(page, loc, llm, meter, step):
         k = re.findall(r"\d+", meter.ask(llm, PICK.format(step=step, cands=cands), "pick"))
         k = int(k[0]) if k else 0
         if 1 <= k <= len(hits):
-            return hits[k - 1]["py"], "shortlist"
+            return hits[k - 1], "shortlist"
     # fallback: the whole page, as the LLM would see it without the library
     full = loc.find(page, step, max=10_000)
     cands = "\n".join(f'{h["rank"]}. {h["doc"]}' for h in full)
     k = re.findall(r"\d+", meter.ask(llm, PICK.format(step=step, cands=cands), "fallback_full_page"))
     k = int(k[0]) if k else 0
-    return (full[k - 1]["py"], "full page") if 1 <= k <= len(full) else (None, "not found")
+    return (full[k - 1], "full page") if 1 <= k <= len(full) else (None, "not found")
 
 
 def run_case(page, loc, llm, meter, url, case):
@@ -148,17 +148,22 @@ def run_case(page, loc, llm, meter, url, case):
                     code.append(f"    # exact text {value!r} not on the page; checking '{target}' instead")
             if act not in ACTIONS:
                 return code, f"skipped unknown action {act!r}"
-            py, how = ground(page, loc, llm, meter, f"{act} {target}" + (f" with {value}" if value else ""))
-            if py is None:
+            hit, how = ground(page, loc, llm, meter, f"{act} {target}" + (f" with {value}" if value else ""))
+            if hit is None:
                 return code, f"no element for: {act} {target}"
-            el = eval(py, {"page": page})
+            el, py = to_locator(page, hit), hit["py"]  # live Locator for running, Python text for the test file
             line = {"fill": f".fill({value!r})", "click": ".click()", "select": f".select_option(label={value!r})",
                     "check": ".check()", "assert_visible": None}[act]
             if line is None:
                 expect(el).to_be_visible()
                 code.append(f"    expect({py}).to_be_visible()  # {how}")
             else:
-                eval(py + line, {"page": page})
+                if act == "fill":
+                    el.fill(value)
+                elif act == "select":
+                    el.select_option(label=value)
+                else:
+                    getattr(el, act)()  # click / check
                 code.append(f"    {py}{line}  # {how}")
             page.wait_for_load_state("domcontentloaded")
             page.wait_for_timeout(600)

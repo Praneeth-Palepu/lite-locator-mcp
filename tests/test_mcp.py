@@ -1,6 +1,7 @@
 """End to end with the real Playwright MCP server (needs Node/npx and the [mcp] extra): the proxy and the LangChain
 wrapper against the local test pages."""
 import asyncio
+import os
 import re
 import shutil
 import sys
@@ -8,7 +9,7 @@ import sys
 import pytest
 
 pytestmark = pytest.mark.skipif(shutil.which("npx") is None, reason="needs npx (Node) for Playwright MCP")
-PW_MCP = "@playwright/mcp@0.0.83"
+PW_MCP = os.environ.get("TEST_PW_MCP", "@playwright/mcp@0.0.83")  # mcp 1.3 clients need an older one (0.0.29)
 
 
 def _text(res):
@@ -21,8 +22,9 @@ def test_proxy_find_and_diff(site):
     from mcp.client.stdio import stdio_client
 
     async def run():
-        params = StdioServerParameters(command=sys.executable, args=["-m", "elem_rank.mcp_proxy", "--", "--headless", "--isolated"],
-                                       env={"PLAYWRIGHT_MCP": f"npx -y {PW_MCP}", "PATH": __import__("os").environ["PATH"]})
+        params = StdioServerParameters(command=sys.executable,
+                                       args=["-m", "elem_rank.mcp_proxy", "--", "--headless", "--isolated"],
+                                       env={"PLAYWRIGHT_MCP": f"npx -y {PW_MCP}", "PATH": os.environ["PATH"]})
         async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
             await s.initialize()
             names = [t.name for t in (await s.list_tools()).tools]
@@ -54,7 +56,8 @@ def test_langchain_with_real_mcp(site, loc):
             f = str(await by["browser_find_element"].ainvoke({"step": "add the Sauce Labs Onesie to the cart"}))
             ref = re.search(r"\[ref=(e\d+)\]", f).group(1)
             assert "Onesie" in f.splitlines()[[i for i, x in enumerate(f.splitlines()) if "[ref=" in x][0]]
-            out = str(await by["browser_click"].ainvoke({"target": ref}))
+            key = "target" if "target" in str(by["browser_click"].args_schema) else "ref"  # newer / older Playwright MCP
+            out = str(await by["browser_click"].ainvoke({key: ref, "element": "add to cart"}))
             assert "Cart, 1 items" in out and "```yaml" not in out
 
     asyncio.run(run())

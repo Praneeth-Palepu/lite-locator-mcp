@@ -7,6 +7,9 @@ from pathlib import Path
 # ELEM_RANK_HOME: folder holding models/ (and data/ caches) for an installed copy; defaults to the repo checkout
 ROOT = Path(os.environ.get("ELEM_RANK_HOME") or Path(__file__).resolve().parent.parent)
 DATA = ROOT / "data"
+# base models from the Hugging Face hub, pinned to exact revisions (a moved tag can't swap the weights underneath)
+REVISIONS = {"BAAI/bge-small-en-v1.5": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+             "cross-encoder/ms-marco-MiniLM-L6-v2": "233902d25c440f23af6f7d6e94d2946bac0bee0a"}
 
 
 def humanize(s):
@@ -72,7 +75,7 @@ def equivalents(elements, i):
 
 def load_jsonl(p):
     with open(p) as f:
-        return [json.loads(l) for l in f if l.strip()]
+        return [json.loads(x) for x in f if x.strip()]
 
 
 def write_jsonl(p, rows):

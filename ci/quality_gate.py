@@ -59,7 +59,8 @@ def main():
         return
     base = json.loads(BASELINE.read_text())
     bad = [k for k in ("hit@1", "hit@10") if res[k] < base[k] - TOLERANCE]
-    print(f"baseline {base['hit@1']}/{base['hit@10']} -> now {res['hit@1']}/{res['hit@10']}: " + ("FAIL " + ",".join(bad) if bad else "OK"))
+    verdict = "FAIL " + ",".join(bad) if bad else "OK"
+    print(f"baseline {base['hit@1']}/{base['hit@10']} -> now {res['hit@1']}/{res['hit@10']}: {verdict}")
     sys.exit(1 if bad else 0)
 
 

@@ -15,8 +15,10 @@ Playwright Python page (sync or async) instead of MCP:
 """
 import asyncio
 import inspect
+import time
 
-from elem_rank.diff import Snap, outcome, split_snapshot
+from elem_rank.diff import Snap, noise, outcome, split_snapshot
+from elem_rank.locate import POLL, WAIT_MAX
 from elem_rank.locate import Locator
 
 ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover",
@@ -24,7 +26,10 @@ ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select
            "browser_handle_dialog", "browser_file_upload", "browser_wait_for", "browser_tab_select"}
 
 LOCATOR_HINT = ("To locate an element for a step, call browser_find_element with the step in plain words and use the "
-                "best fitting candidate. Call browser_snapshot only if no candidate fits.\n")
+                "best fitting candidate. Call browser_snapshot only if no candidate fits, and for checks that need the "
+                "whole page or a whole list (counts, 'all items', totals, comparing many values). After an action, "
+                "read its Result: if it says no change was detected, do not repeat a submit, payment or delete; "
+                "check the page with browser_snapshot first.\n")
 
 DESC = ("Find the page elements that match a test step, without reading the whole page. Give the step in plain words "
         "(e.g. 'Enter standard_user in the username field', 'Click Buy Now for the Halloween package'). Returns a short "
@@ -92,13 +97,39 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
         description=DESC.format(use="Pass a candidate's ref to browser_click, browser_type etc. (the `ref`/`target` "
                                     "argument your Playwright tools take).",
                                 fallback="call browser_snapshot to see the full page."))
-    def result(orig_name, text, after_text):
+    def finish(text, pre, quiet, t0, again):
+        """Outcome of an action; if nothing changed yet, keep checking (slow responses) up to WAIT_MAX seconds."""
         rest, yaml, url, title = split_snapshot(text)
-        after = Snap(url, title, yaml) if yaml else _state(after_text or "")
+        after = Snap(url, title, yaml) if yaml else again()
         if after is None:
             return text
-        before, seen["last"] = seen["last"], after
-        return f"{rest}\n\n### Result\n{outcome(before, after)}".strip()
+        while True:
+            res = outcome(pre, after, quiet, time.time() - t0)
+            if "No change detected" not in res or time.time() - t0 >= WAIT_MAX:
+                break
+            time.sleep(POLL)
+            after = again() or after
+        seen["last"] = after
+        return f"{rest}\n\n### Result\n{res}".strip()
+
+    async def afinish(text, pre, quiet, t0, again):
+        rest, yaml, url, title = split_snapshot(text)
+        after = Snap(url, title, yaml) if yaml else await again()
+        if after is None:
+            return text
+        while True:
+            res = outcome(pre, after, quiet, time.time() - t0)
+            if "No change detected" not in res or time.time() - t0 >= WAIT_MAX:
+                break
+            await asyncio.sleep(POLL)
+            after = (await again()) or after
+        seen["last"] = after
+        return f"{rest}\n\n### Result\n{res}".strip()
+
+    def before_state(pre):
+        """Positions that change by themselves (tickers): those since the last look, on the same page."""
+        last = seen["last"]
+        return noise(last.snapshot, pre.snapshot) if pre and last and last.url == pre.url else frozenset()
 
     def wrap(t):
         if t.name.endswith("browser_snapshot"):  # full tree on request: pass through, remember it
@@ -112,13 +143,23 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 remember(out)
                 return out
         elif t.name.split("__")[-1] in ACTIONS:
+            async def again_a():
+                return _state(_text(await snap.ainvoke({})))
+
             async def acall(**kw):
+                pre = await again_a()
+                quiet, t0 = before_state(pre), time.time()
                 out = _text(await t.ainvoke(kw))
-                return result(t.name, out, None if "```yaml" in out else _text(await snap.ainvoke({})))
+                return await afinish(out, pre or seen["last"], quiet, t0, again_a)
+
+            def again_s():
+                return _state(_text(snap.invoke({})))
 
             def call(**kw):
+                pre = again_s()
+                quiet, t0 = before_state(pre), time.time()
                 out = _text(t.invoke(kw))
-                return result(t.name, out, None if "```yaml" in out else _text(snap.invoke({})))
+                return finish(out, pre or seen["last"], quiet, t0, again_s)
         else:
             return t
         desc = t.description + ("" if t.name.endswith("browser_snapshot") else

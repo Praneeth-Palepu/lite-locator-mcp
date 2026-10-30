@@ -30,7 +30,9 @@ def locator(e):
     if a.get("testid"):
         # getByTestId only reads data-testid (Playwright's default); data-test / data-qa need a CSS attribute locator
         attr = a.get("testid_attr") or "data-testid"
-        return f'page.getByTestId("{a["testid"]}")' if attr == "data-testid" else f"page.locator('[{attr}=\"{a['testid']}\"]')"
+        if attr == "data-testid":
+            return f'page.getByTestId("{a["testid"]}")'
+        return f"page.locator('[{attr}=\"{a['testid']}\"]')"
     if e.get("role") in ARIA and name and len(name) <= 80:
         return f'page.getByRole("{e["role"]}", {{ name: "{name}" }})'
     if a.get("placeholder"):
@@ -45,8 +47,8 @@ def _q(t):
 
 
 def py_locator(e, js=None, how="plain"):
-    """The same locator in Playwright Python syntax (runnable with eval(..., {"page": page})). js/how: the resolved
-    JavaScript locator and strategy from resolve(), to carry over card scoping and .nth(i)."""
+    """The same locator in Playwright Python syntax, for generated test code (to act from Python use to_locator()).
+    js/how: the resolved JavaScript locator and strategy from resolve(), to carry over card scoping and .nth(i)."""
     a, name = e.get("attrs", {}), e.get("name") or ""
     if a.get("testid"):
         attr = a.get("testid_attr") or "data-testid"
@@ -232,9 +234,10 @@ class Locator:
 
     def _page_hits(self, els, top, s, resolved):
         hits = Hits()
-        for r, (i, (loc, n, how)) in enumerate(zip(top, resolved)):
+        for r, (i, (loc, n, how)) in enumerate(zip(top, resolved, strict=True)):
             e = els[i]
             hits.append({"rank": r + 1, "score": round(float(s[i]), 3), "locator": loc, "py": py_locator(e, loc, how),
+                         "element": e,
                          "matches": n, "strategy": how,
                          "role": e["role"], "name": e.get("name") or "", "card": e.get("card", ""),
                          "clickable": bool(e.get("clickable")), "doc": doc(e)})
@@ -277,6 +280,24 @@ class Locator:
 
 # ---------- what an action changed (instead of full snapshots) ----------
 
+WAIT_MAX = 3.0   # seconds to keep checking for a late change (slow server responses) before reporting "no change"
+POLL = 0.5
+
+
+def to_locator(page, hit):
+    """A live Playwright Locator for a find() hit (built with Playwright calls, never eval), or a Locator as is."""
+    if not isinstance(hit, dict):
+        return hit  # already a Locator
+    e, how, js = hit["element"], hit.get("strategy", "plain"), hit.get("locator", "")
+    root = page
+    if how == "card-scoped":
+        root = page.locator(e["card_sel"]).filter(has_text=e["card"])
+    loc = _base(root, e)
+    if how.startswith("positional") and ".nth(" in js:
+        loc = loc.nth(int(js[js.rindex(".nth(") + 5:-1]))
+    return loc
+
+
 def observe(page):
     """The page state to compare against after an action (sync Playwright page)."""
     from .diff import Snap
@@ -288,33 +309,84 @@ async def aobserve(page):
     return Snap(page.url, await page.title(), await page.locator("body").aria_snapshot())
 
 
-def _target(page, hit):
-    return eval(hit["py"] if isinstance(hit, dict) else hit, {"page": page})  # a find() hit or its "py" string
+def _do(el, action, value):
+    return {"click": lambda: el.click(), "dblclick": lambda: el.dblclick(), "hover": lambda: el.hover(),
+            "fill": lambda: el.fill(value or ""), "type": lambda: el.press_sequentially(value or ""),
+            "select": lambda: el.select_option(label=value), "check": lambda: el.check(),
+            "uncheck": lambda: el.uncheck(), "press": lambda: el.press(value or "Enter")}[action]
 
 
-def act(page, hit, action, value=None, settle=600):
-    """Do one action on a find() hit (or a Python locator string) and return what changed, as a few lines:
-    navigation summary, the added/removed/changed elements, or "No visible change".
+def _extra(tabs, dialogs, dialog_choice):
+    out = [f"A browser dialog appeared: {m!r} (it was {'accepted' if dialog_choice == 'accept' else 'dismissed'})."
+           for m in dialogs]
+    return out + [f"A new tab opened: {u}" for u in tabs]
+
+
+def act(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
+    """Do one action on a find() hit (or a Playwright Locator) and return what changed, as a few lines: a navigation
+    summary, the added/removed/changed elements, or "No change detected within N s" (after waiting for late
+    responses). New tabs and browser dialogs are reported; dialog: "dismiss" (default) or "accept".
     action: click | dblclick | hover | fill | type | select | check | uncheck | press."""
-    from .diff import outcome
-    before, el = observe(page), _target(page, hit)
-    {"click": lambda: el.click(), "dblclick": lambda: el.dblclick(), "hover": lambda: el.hover(),
-     "fill": lambda: el.fill(value or ""), "type": lambda: el.press_sequentially(value or ""),
-     "select": lambda: el.select_option(label=value), "check": lambda: el.check(), "uncheck": lambda: el.uncheck(),
-     "press": lambda: el.press(value or "Enter")}[action]()
-    page.wait_for_load_state("domcontentloaded")
-    page.wait_for_timeout(settle)
-    return outcome(before, observe(page))
+    from .diff import noise, outcome
+    import time
+    b1 = observe(page)
+    page.wait_for_timeout(300)
+    before = observe(page)
+    quiet = noise(b1.snapshot, before.snapshot) if b1.url == before.url else frozenset()
+    tabs, dialogs = [], []
+    on_page = lambda p: tabs.append(p.url)
+    on_dialog = lambda d: (dialogs.append(d.message), d.accept() if dialog == "accept" else d.dismiss())
+    page.context.on("page", on_page)
+    page.on("dialog", on_dialog)
+    try:
+        _do(to_locator(page, hit), action, value)()
+        t0 = time.time()
+        try:
+            page.wait_for_load_state("networkidle", timeout=int(wait_max * 1000))
+        except Exception:  # pages that never go idle (polling, websockets): fall back to polling the tree
+            pass
+        page.wait_for_timeout(int(POLL * 1000))
+        while True:
+            after = observe(page)
+            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
+            if "No change detected" not in text or time.time() - t0 >= wait_max:
+                return text
+            page.wait_for_timeout(int(POLL * 1000))
+    finally:
+        page.context.remove_listener("page", on_page)
+        page.remove_listener("dialog", on_dialog)
 
 
-async def aact(page, hit, action, value=None, settle=600):
+async def aact(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
     """act() for an async Playwright page."""
-    from .diff import outcome
-    before, el = await aobserve(page), _target(page, hit)
-    run = {"click": el.click, "dblclick": el.dblclick, "hover": el.hover, "check": el.check, "uncheck": el.uncheck,
-           "fill": lambda: el.fill(value or ""), "type": lambda: el.press_sequentially(value or ""),
-           "select": lambda: el.select_option(label=value), "press": lambda: el.press(value or "Enter")}[action]
-    await run()
-    await page.wait_for_load_state("domcontentloaded")
-    await page.wait_for_timeout(settle)
-    return outcome(before, await aobserve(page))
+    from .diff import noise, outcome
+    import time
+    b1 = await aobserve(page)
+    await page.wait_for_timeout(300)
+    before = await aobserve(page)
+    quiet = noise(b1.snapshot, before.snapshot) if b1.url == before.url else frozenset()
+    tabs, dialogs = [], []
+    on_page = lambda p: tabs.append(p.url)
+
+    async def on_dialog(d):
+        dialogs.append(d.message)
+        await (d.accept() if dialog == "accept" else d.dismiss())
+    page.context.on("page", on_page)
+    page.on("dialog", on_dialog)
+    try:
+        await _do(to_locator(page, hit), action, value)()
+        t0 = time.time()
+        try:
+            await page.wait_for_load_state("networkidle", timeout=int(wait_max * 1000))
+        except Exception:
+            pass
+        await page.wait_for_timeout(int(POLL * 1000))
+        while True:
+            after = await aobserve(page)
+            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
+            if "No change detected" not in text or time.time() - t0 >= wait_max:
+                return text
+            await page.wait_for_timeout(int(POLL * 1000))
+    finally:
+        page.context.remove_listener("page", on_page)
+        page.remove_listener("dialog", on_dialog)

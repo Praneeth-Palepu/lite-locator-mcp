@@ -2,6 +2,29 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.4 (2026-10-30)
+**What:**
+- Actions: when nothing changes, keep checking for up to 3 s (slow server responses) before reporting; the "no
+  change" message now says not to repeat a submit / payment / delete and to check with browser_snapshot. New tabs and
+  browser dialogs are reported (`act(..., dialog="dismiss"|"accept")`).
+- Change lines name the card for repeated buttons ("+ button Remove (card: Sauce Labs Backpack)").
+- Changes that happen by themselves (tickers, carousels) are filtered: the page is compared with itself just before
+  the action.
+- Hint and tool descriptions: whole-page / whole-list checks use browser_snapshot; don't repeat irreversible actions.
+- Security: removed `eval()` from the runtime (new `to_locator(page, hit)` builds Playwright Locators directly; find()
+  hits carry the element); training code loads models with `torch.load(weights_only=True)` and pins Hugging Face
+  revisions.
+- Fixed: on MCP snapshots, short text inside an unnamed container ("English" in a generic) was dropped by two filters
+  at once (0.1.2's JS-only control support did not cover that shape).
+- Docs: README rewritten (setup table, three usage paths, behaviour table, limits). LangChain users must not install
+  `[mcp]`: the latest langchain-mcp-adapters breaks with mcp 2.x (found by the new LangChain CI environment).
+- Process: local git history, test suite, `ci/check.sh` (17 checks) and `ci/publish.sh` (uploads only an all-green
+  report of the current commit).
+**Why:** the worst cases of "shortlist + what changed" (owner review, 2026-10-30): a late response reported as "no
+change" could make the agent repeat a payment; a wrong look-alike pick was not visible in the diff; partial views
+could pass a whole-page check; busy pages flooded the diff.
+**Checked:** see `ci/reports/0.1.4.md`.
+
 ## 0.1.3 (2026-10-30)
 **What:** actions return what changed on the page instead of a full snapshot (`elem_rank/diff.py`): a navigation
 summary, the added (+) / removed (-) / changed (~) elements, or "No visible change". Page API `act()` / `aact()` /
