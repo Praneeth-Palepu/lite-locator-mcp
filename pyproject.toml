@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lite-locator-mcp"
+version = "0.1.3"
+description = "Playwright MCP with a semantic element finder in front: the LLM gets a shortlist of candidates instead of the whole accessibility tree."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Praneeth Kumar Palepu" }]
+keywords = ["mcp", "playwright", "test automation", "llm", "accessibility tree", "element locator"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+# the shipped models are ONNX int8, so no PyTorch
+# runtime only, and no MCP: the library API works next to any installed mcp version
+dependencies = ["numpy>=1.24", "onnxruntime>=1.17", "tokenizers>=0.15"]
+
+[project.optional-dependencies]
+# the MCP proxy server (lite-locator-mcp command)
+mcp = ["mcp>=2.3,<3"]
+# retraining / experiments in this repo
+train = ["torch>=2.2", "transformers>=4.40", "sentence-transformers>=3.0", "datasets>=2.18", "rank_bm25", "playwright>=1.44", "onnx"]
+
+[project.scripts]
+lite-locator-mcp = "elem_rank.mcp_proxy:run"
+
+[tool.setuptools]
+packages = ["elem_rank", "lite_locator"]
+
+[tool.setuptools.package-data]
+elem_rank = ["extract.js", "models-lite/*"]
