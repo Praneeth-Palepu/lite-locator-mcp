@@ -5,8 +5,10 @@ Every release: what changed, why, and how it was checked. Reports with the full 
 ## 0.1.5 (2026-10-30)
 **What** (all found by a complex flow on practicesoftwaretesting.com: search → sort → first product → quantity → add to
 cart → cart; each fix is generic and has a test on a local page):
-- Data-entry steps are ranked by their target element, not the typed value (`elem_rank/steps.py`): "Search for
-  pliers" picked the "Pliers" category checkbox instead of the search box.
+- Data-entry steps are scored by their target element and as written, equally weighted (`elem_rank/steps.py`,
+  `locate.rank_step`): "Search for pliers" picked the "Pliers" category checkbox instead of the search box. The first
+  version ranked by the target alone; the quality gate showed 2 held-out steps losing first place (the value names a
+  dropdown option, or tells look-alike fields apart), so both scores are combined.
 - Ordinal steps ("open the first product", "click the last result") pick by position in the page's main repeated list
   of links; "first name" and similar field names are not positions.
 - Parser: YAML-quoted snapshot lines (text containing ": ", e.g. "CO₂: A B C") were dropped, which hid every product
@@ -27,6 +29,8 @@ cart → cart; each fix is generic and has a test on a local page):
 generated the script (search, sort, product, quantity, add to cart, open cart). The remaining errors were the small
 model's (it clicked "increase quantity" twice although the result showed 1 → 2, then 2 → 3), and the change reports
 made that visible.
+**Trade-off (measured):** quality gate top-10 unchanged (81.67%); top-1 66.67% vs 67.50%: one held-out step ("Enter
+"New York" in the Origin field") ranks 2nd behind the similar Destination field, still in the shortlist.
 **Checked:** see `ci/reports/0.1.5.md`.
 
 ## 0.1.4 (2026-10-30)

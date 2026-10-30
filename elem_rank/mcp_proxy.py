@@ -46,7 +46,7 @@ import numpy as np
 from .diff import Snap, noise, outcome, split_snapshot
 from .locate import POLL, WAIT_MAX
 from .snapshot import DETAILS_JS, demote_orphans, elements, line, merge_details, needs_details
-from .steps import clean_args, target_of
+from .steps import clean_args
 
 ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover",
            "browser_press_key", "browser_drag", "browser_navigate", "browser_navigate_back", "browser_navigate_forward",
@@ -84,7 +84,8 @@ class Finder:
         if self.rk is None:
             from .lite import LiteRanker
             self.rk = LiteRanker()  # the ONNX models shipped in the package
-        s, lg = self.rk.rank(target_of(step), docs, key)  # data-entry steps: rank the target, not the value
+        from .locate import rank_step
+        s, lg = rank_step(self.rk, step, docs, key)  # data-entry steps: target element + step as written
         k = self.rk.cut(lg, self.lam) or 5
         s = demote_orphans(np.array(s, dtype=float), els)
         k = min(k, cap) if cap else k

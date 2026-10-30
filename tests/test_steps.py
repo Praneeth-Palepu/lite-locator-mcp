@@ -43,3 +43,14 @@ def test_clean_args():
 ])
 def test_ordinal_of(step, pos):
     assert ordinal_of(step) == pos
+
+
+
+def test_score_normalisation_handles_small_and_large_pages():
+    import numpy as np
+
+    from elem_rank.locate import _zin
+    small = _zin(np.array([2.0, 1.0, 0.5]))  # every element reranked
+    assert small.argmax() == 0 and np.isfinite(small).all()
+    big = _zin(np.array([2.0, 1.0, -1000.5, -1000.0]))  # two outside the reranked top-k
+    assert list(np.argsort(-big)) == [0, 1, 3, 2] and big[3] < big[1]

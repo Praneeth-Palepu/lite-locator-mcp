@@ -14,6 +14,8 @@ No PyTorch and no MCP needed: onnxruntime + tokenizers + numpy, with the models 
 """
 import inspect
 import json
+
+import numpy as np
 from pathlib import Path
 
 from .common import doc
@@ -196,6 +198,34 @@ def _css_slot(e):
     return re.sub(r":nth-of-type\(\d+\)", "", e["css"])
 
 
+def _zin(s):
+    """z-scores over the reranked top-k only; everything else just below their minimum (the ranker marks those with
+    a large negative offset that must not dominate the statistics)."""
+    s = np.asarray(s, dtype=float)
+    inside = s > -500
+    v = s[inside]
+    out = np.full_like(s, 0.0)
+    out[inside] = (v - v.mean()) / (v.std() + 1e-6)
+    if (~inside).any():  # small pages: every element is in the top-k
+        lo = out[inside].min() if inside.any() else 0.0
+        out[~inside] = lo - 1.0 + (s[~inside] - s[~inside].max()) * 1e-3  # keep their order, below the top-k
+    return out
+
+
+def rank_step(rk, step, docs, key):
+    """Scores for a step. Data-entry steps ("Type pliers in the search box") are scored by their target element AND
+    as written, equally weighted: the target keeps a value that also appears on the page (a "Pliers" category) from
+    winning, and the value still helps where it names an option of the dropdown or tells look-alike fields apart.
+    Returns (scores, reranker logits for the cut policy)."""
+    from .steps import target_of
+    q = target_of(step)
+    st, lg = rk.rank(q, docs, key)
+    if q == step:
+        return st, lg
+    so, _ = rk.rank(step, docs, key)
+    return _zin(st) + _zin(so), lg
+
+
 class Hits(list):
     """The shortlist (best first) plus what an agent needs to build its prompt."""
     prompt: str
@@ -213,9 +243,7 @@ class Locator:
         self.lam, self.rk = lam, LiteRanker(model_dir or bundle_dir())
 
     def _rank(self, step, docs, cap, els=None):
-        from .steps import target_of
-        query = target_of(step)  # data-entry steps are ranked by their target element, not the typed value
-        s, lg = self.rk.rank(query, docs, ("page", hash(tuple(docs))))  # same page state -> embeddings reused
+        s, lg = rank_step(self.rk, step, docs, ("page", hash(tuple(docs))))  # same page -> embeddings reused
         if els is not None:
             from .snapshot import demote_orphans
             s = demote_orphans(s.copy(), els)
