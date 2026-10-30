@@ -44,7 +44,7 @@ async def main():
                                    prompt=LOCATOR_HINT + "You are a QA test agent.",  # ★2
                                    pre_model_hook=snapshot_hook)              # ★3
 
-        result = await agent.ainvoke({"messages": [("user", TASK)]}, {"recursion_limit": 40})
+        result = await agent.ainvoke({"messages": [("user", TASK)]}, {"recursion_limit": 150})
         for m in result["messages"]:
             if m.type == "tool":
                 print(f"\n[{m.name}]\n{str(m.content)[-400:]}")

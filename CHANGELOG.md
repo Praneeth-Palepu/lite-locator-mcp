@@ -24,11 +24,17 @@ cart → cart; each fix is generic and has a test on a local page):
 - `with_lite_locator(tools, keep={...})`: the LLM sees only the named tools (fewer tokens per call) while the library
   still uses browser_snapshot / browser_evaluate. Filtering the list before wrapping hid those from the library.
 - Hints: pass only the ref; describing the element to act on works best.
+- Change reports show the ref of every added / changed element on MCP snapshots (`+ option "Maths" [ref=e301]`), so
+  the LLM can pick an autocomplete suggestion or a dropdown option that just appeared. Found on demoqa.com: the
+  suggestion was reported without a ref and the model guessed. Refs are not part of the comparison, so re-rendered
+  elements with new refs don't show up as changes.
 **Why:** owner asked for a complex use case on a different website, with the generated test script.
 **Result on the site** (LangGraph agent, local Qwen3 4B): 0.1.4 stopped at step 2; 0.1.5 completed every step and
 generated the script (search, sort, product, quantity, add to cart, open cart). The remaining errors were the small
 model's (it clicked "increase quantity" twice although the result showed 1 → 2, then 2 → 3), and the change reports
 made that visible.
+**Second complex site** (owner request): demoqa.com practice form, 12 steps (text fields, radio, autocomplete,
+checkbox, React state/city dropdowns, submit, confirmation dialog): PASS with the generated script after the ref fix.
 **Trade-off (measured):** quality gate top-10 unchanged (81.67%); top-1 66.67% vs 67.50%: one held-out step ("Enter
 "New York" in the Origin field") ranks 2nd behind the similar Destination field, still in the shortlist.
 **Checked:** see `ci/reports/0.1.5.md`.

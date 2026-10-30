@@ -101,7 +101,7 @@ async def main():
             tools = with_lite_locator(tools, keep=keep)    # the full list goes in; the LLM sees find + `keep`
             agent = create_react_agent(make_llm(), tools, prompt=LOCATOR_HINT + SYSTEM,
                                        pre_model_hook=snapshot_hook)    # old full snapshots are not re-read
-        result = await agent.ainvoke({"messages": [("user", case)]}, {"recursion_limit": 60})
+        result = await agent.ainvoke({"messages": [("user", case)]}, {"recursion_limit": 150})
 
     msgs = result["messages"]
     if a.verbose:

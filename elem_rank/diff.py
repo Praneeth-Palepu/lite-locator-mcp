@@ -57,15 +57,18 @@ def _path(n):
 
 
 def _with_card(item, items):
-    """Add the card title when the element's role repeats (which "Remove" button? the Backpack's)."""
+    """The line as shown: with the element's ref when the snapshot has refs (so the LLM can act on a new element,
+    e.g. an autocomplete suggestion, without another lookup), and the card title when its role repeats."""
     n = item.node
+    head, sep, ctx = item.line.partition("  (in ")
+    line = head + (f" [ref={n.ref}]" if n.ref else "") + (sep + ctx if sep else "")
     if n.role not in INTERACTIVE:
-        return item.line
+        return line
     members = [x.node for x in items if x.node.role == n.role]
     if len(members) < CARD_MIN:
-        return item.line
+        return line
     card = card_of(n, members) or _heading_before(n, members)
-    return item.line + (f"  (card: {card[:60]})" if card else "")
+    return line + (f"  (card: {card[:60]})" if card else "")
 
 
 def _heading_before(n, members):
@@ -130,7 +133,7 @@ def changes(before, after, ignore=frozenset()):
                 paired.add(x.key)
             else:
                 lines.append(f"+ {_with_card(x, b)}")
-        lines += [f"- {_with_card(x, a)}" for x in old if x.key not in paired]
+        lines += [f"- {_with_card(x, a).split(' [ref=')[0]}" for x in old if x.key not in paired]
     return lines, changed / max(1, len(a), len(b))
 
 

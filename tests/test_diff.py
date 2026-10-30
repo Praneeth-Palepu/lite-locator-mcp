@@ -82,3 +82,17 @@ def test_noise_positions_are_ignored():
 def test_new_tab_and_dialog_lines_come_first():
     out = outcome(Snap("u", "t", A), Snap("u", "t", A), extra=["A new tab opened: http://x/p"])
     assert out.splitlines()[0] == "A new tab opened: http://x/p"
+
+
+
+def test_new_elements_carry_their_ref_on_mcp_snapshots():
+    before = '- combobox [ref=e141]\n'
+    after = '- combobox "Maths" [expanded] [ref=e141]\n- listbox [ref=e300]:\n  - option "Maths" [ref=e301]\n'
+    out = outcome(Snap("u", "t", before), Snap("u", "t", after))
+    assert 'option "Maths" [ref=e301]' in out
+
+
+def test_refs_do_not_create_fake_changes():
+    a = '- button "Login" [ref=e5]\n'
+    b = '- button "Login" [ref=e9]\n'  # same element, new ref after a re-render
+    assert outcome(Snap("u", "t", a), Snap("u", "t", b)).startswith("No change detected")
