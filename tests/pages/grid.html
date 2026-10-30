@@ -1,0 +1,15 @@
+<!doctype html><html><head><title>Products</title></head><body>
+<header><button aria-label="Cart, empty" id="cart">Cart</button></header>
+<main><h1>Products</h1>
+<div class="item"><h3>Sauce Labs Backpack</h3><span>$29.99</span><button class="add">Add to cart</button></div>
+<div class="item"><h3>Sauce Labs Bike Light</h3><span>$9.99</span><button class="add">Add to cart</button></div>
+<div class="item"><h3>Sauce Labs Onesie</h3><span>$7.99</span><button class="add">Add to cart</button></div>
+</main>
+<script>
+let n = 0;
+document.querySelectorAll('.add').forEach(b => b.onclick = () => {
+  const on = b.textContent === 'Add to cart';
+  b.textContent = on ? 'Remove' : 'Add to cart'; n += on ? 1 : -1;
+  document.getElementById('cart').setAttribute('aria-label', n ? `Cart, ${n} items` : 'Cart, empty');
+});
+</script></body></html>

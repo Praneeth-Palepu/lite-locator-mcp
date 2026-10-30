@@ -1,0 +1,16 @@
+<!doctype html><html><head><title>Shop login</title></head><body>
+<header><nav><a href="/grid.html">Products</a> <a href="/help.html">Help</a></nav></header>
+<main><form aria-label="Login" onsubmit="return false">
+  <input data-test="username" placeholder="Username" aria-label="Username">
+  <input data-test="password" type="password" placeholder="Password" aria-label="Password">
+  <button data-test="login" id="login">Login</button>
+</form>
+<div id="msg"></div>
+<div><h4>Accepted usernames are:</h4><span>standard_user</span></div></main>
+<script>
+document.getElementById('login').onclick = () => {
+  const u = document.querySelector('[data-test=username]').value, p = document.querySelector('[data-test=password]').value;
+  if (u === 'standard_user' && p === 'secret') { location.href = '/grid.html'; return; }
+  document.getElementById('msg').innerHTML = '<div role="alert">Username and password do not match</div>';
+};
+</script></body></html>

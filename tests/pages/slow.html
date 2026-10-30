@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>Payment</title></head><body>
+<main><h1>Checkout</h1><button id="pay">Pay now</button><div id="status"></div></main>
+<script>
+document.getElementById('pay').onclick = () => setTimeout(() => {
+  document.getElementById('status').innerHTML = '<div role="status">Payment received</div>';
+}, 1500);
+</script></body></html>

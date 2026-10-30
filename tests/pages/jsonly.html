@@ -1,0 +1,9 @@
+<!doctype html><html><head><title>Resort</title></head><body>
+<my-header><my-item id="lang"><div class="label">English</div></my-item><my-item><div class="label">Map</div></my-item></my-header>
+<main><h1>Welcome to the resort</h1><p>Plan your visit and enjoy the parks with your family.</p></main>
+<div id="menu"></div>
+<script>
+document.getElementById('lang').addEventListener('click', () => {
+  document.getElementById('menu').innerHTML = '<div role="dialog" aria-label="Choose language"><span>简体中文</span> <span>日本語</span> <span>Other Languages</span></div>';
+});
+</script></body></html>

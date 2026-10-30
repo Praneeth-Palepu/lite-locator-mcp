@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>News</title></head><body>
+<section aria-label="Headlines"><p id="ticker">Headline 0</p></section>
+<main><h1>Newsletter</h1><input aria-label="Email" placeholder="Email"><button id="sub">Subscribe</button><div id="out"></div></main>
+<script>
+let i = 0; setInterval(() => { document.getElementById('ticker').textContent = 'Headline ' + (++i); }, 200);
+document.getElementById('sub').onclick = () => { document.getElementById('out').innerHTML = '<div role="status">Thanks for subscribing</div>'; };
+</script></body></html>

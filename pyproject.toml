@@ -36,3 +36,14 @@ packages = ["elem_rank", "lite_locator"]
 
 [tool.setuptools.package-data]
 elem_rank = ["extract.js", "models-lite/*"]
+
+[tool.ruff]
+line-length = 125
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E731"]  # small lambdas assigned to names are used on purpose
+
+[tool.bandit]
+exclude_dirs = ["tests"]
