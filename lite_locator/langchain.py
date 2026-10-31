@@ -16,13 +16,15 @@ Playwright Python page (sync or async) instead of MCP:
 import asyncio
 import inspect
 import json
+import re
 import time
 
 from elem_rank.diff import Snap, noise, outcome, split_snapshot
 from elem_rank.locate import POLL, WAIT_MAX
 from elem_rank.locate import Locator
 from elem_rank.snapshot import DETAILS_JS, elements, needs_details
-from elem_rank.steps import clean_args
+from elem_rank.stable import STABLE_JS, needs_stable, parse as parse_stable, rewrite_code
+from elem_rank.steps import clean_args, clean_ref
 
 ACTIONS = {"browser_click", "browser_type", "browser_fill_form", "browser_select_option", "browser_hover",
            "browser_press_key", "browser_drag", "browser_navigate", "browser_navigate_back", "browser_navigate_forward",
@@ -38,6 +40,20 @@ DESC = ("Find the page elements that match a test step, without reading the whol
         "(e.g. 'Enter standard_user in the username field', 'Click Buy Now for the Halloween package'); describing the "
         "element to act on works best ('the search box', 'the quantity field'). Returns a short "
         "list of candidates, best first. {use} If none of the candidates fits the step, {fallback}")
+
+
+# options a test agent never needs; each is sent with every LLM call, and `slowly` makes typing append to a field
+LEAN = {"browser_click": ("doubleClick", "button", "modifiers"), "browser_type": ("slowly",)}
+LOCATOR_IN_CODE = re.compile(r"page\.locator\('((?:[^'\\]|\\.)*)'\)|page\.locator\(\"((?:[^\"\\]|\\.)*)\"\)")
+
+
+def _lean(t):
+    drop = LEAN.get(t.name.split("__")[-1], ())
+    schema = t.args_schema
+    if not drop or not isinstance(schema, dict) or "properties" not in schema:
+        return schema, drop
+    return dict(schema, properties={k: v for k, v in schema["properties"].items() if k not in drop},
+                required=[k for k in schema.get("required", []) if k not in drop]), drop
 
 
 def _text(out):
@@ -65,13 +81,19 @@ def _state(text):
     return Snap(url, title, yaml) if yaml else None
 
 
-def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element", diffs=True, keep=None):
+def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element", diffs=True, keep=None,
+                      stable_code=True, lean=False):
     """Your Playwright MCP tools plus browser_find_element, which ranks the page's own snapshot (taken with your
     existing browser_snapshot tool) and returns only the best few elements with their refs.
     diffs: action tools return what changed instead of a full snapshot (False = unchanged tools).
     keep: names of the tools the LLM should see (browser_find_element is always added). Tool definitions are sent
     with every LLM call, so fewer tools = fewer tokens. Pass the FULL tool list as `tools`: the library itself uses
-    browser_snapshot and browser_evaluate even when the LLM doesn't see them."""
+    browser_snapshot and browser_evaluate even when the LLM doesn't see them.
+    stable_code: in the code Playwright MCP reports for an action, replace locators that carry database IDs or
+    positional CSS paths ([data-test="product-01M66..."]) with a label / card heading / table row / text locator that
+    matches exactly one element, so the generated test survives new data. Needs browser_evaluate.
+    lean: drop tool options a test agent doesn't need (doubleClick, modifiers, slowly …): fewer tokens per call,
+    and typing replaces a field's value instead of appending to it."""
     from langchain_core.tools import StructuredTool
     snap = next((t for t in tools if t.name.endswith("browser_snapshot")), None)
     if snap is None:
@@ -165,7 +187,36 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
         last = seen["last"]
         return noise(last.snapshot, pre.snapshot) if pre and last and last.url == pre.url else frozenset()
 
+    def ref_args(kw):
+        ref = clean_ref(kw.get("ref") or kw.get("target") or "")
+        return {"function": STABLE_JS, "ref": ref, "target": ref, "element": kw.get("element") or "element"} if ref else None
+
+    def sstable(kw):
+        a = ref_args(kw) if stable_code and evaluate is not None else None
+        try:
+            return parse_stable(_eval_result(evaluate.invoke(_fit(evaluate, a)))) if a else []
+        except Exception:  # an evaluate tool with other arguments, or the element is gone: keep the code as is
+            return []
+
+    async def astable(kw):
+        a = ref_args(kw) if stable_code and evaluate is not None else None
+        try:
+            return parse_stable(_eval_result(await evaluate.ainvoke(_fit(evaluate, a)))) if a else []
+        except Exception:
+            return []
+
+    def stabilize(out, opts):
+        """Rewrite volatile / positional locators in the reported code (only when a unique description exists)."""
+        if not opts:
+            return out
+        for m in LOCATOR_IN_CODE.finditer(out):
+            sel = m[1] if m[1] is not None else json.loads('"' + m[2] + '"')
+            if needs_stable(m[0]):
+                out = rewrite_code(out, sel, [o for o in opts if o["kind"] != "text"] or opts)
+        return out
+
     def wrap(t):
+        schema, drop = _lean(t) if lean else (t.args_schema, ())
         if t.name.endswith("browser_snapshot"):  # full tree on request: pass through (inline), remember it
             async def acall(**kw):
                 out = _text(await t.ainvoke(clean_args(t.name, kw)))
@@ -181,28 +232,45 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 return _state(_text(await snap.ainvoke({})))
 
             async def acall(**kw):
+                kw = {k: v for k, v in clean_args(t.name, kw).items() if k not in drop}
+                opts = await astable(kw)
                 pre = await again_a()
                 quiet, t0 = before_state(pre), time.time()
-                out = _text(await t.ainvoke(clean_args(t.name, kw)))
+                out = stabilize(_text(await t.ainvoke(kw)), opts)
                 return await afinish(out, pre or seen["last"], quiet, t0, again_a)
 
             def again_s():
                 return _state(_text(snap.invoke({})))
 
             def call(**kw):
+                kw = {k: v for k, v in clean_args(t.name, kw).items() if k not in drop}
+                opts = sstable(kw)
                 pre = again_s()
                 quiet, t0 = before_state(pre), time.time()
-                out = _text(t.invoke(clean_args(t.name, kw)))
+                out = stabilize(_text(t.invoke(kw)), opts)
                 return finish(out, pre or seen["last"], quiet, t0, again_s)
         else:
             return t
         desc = t.description + ("" if t.name.endswith("browser_snapshot") else
                                 " Returns what changed on the page (navigation, added/removed elements, or no change), "
                                 "not a full snapshot.")
-        return StructuredTool(name=t.name, description=desc, args_schema=t.args_schema, func=call, coroutine=acall)
+        return StructuredTool(name=t.name, description=desc, args_schema=schema, func=call, coroutine=acall)
 
     others = [t for t in tools if t.name != name and (keep is None or t.name.split("__")[-1] in set(keep))]
     return [tool] + ([wrap(t) for t in others] if diffs else others)
+
+
+def _fit(tool, args):
+    """Keep only the arguments the tool's schema knows (ref vs target differs between Playwright MCP versions)."""
+    try:
+        props = tool.args       # the tool's argument names, whatever the schema type
+    except Exception:
+        props = None
+    return {k: v for k, v in args.items() if not props or k in props}
+
+
+def _eval_result(out):
+    return _text(out).split("### Result", 1)[-1].split("###", 1)[0].strip().strip("`").removeprefix("json").strip()
 
 
 def trim_snapshots(messages, keep=1):

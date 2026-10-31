@@ -10,19 +10,20 @@ from playwright.sync_api import sync_playwright
 
 from lite_locator import Locator, act
 
-STEPS = [  # (test step in plain words, action, value)
-    ("Enter standard_user in the username field", "fill", "standard_user"),
-    ("Enter the password", "fill", "secret_sauce"),
-    ("Click the login button", "click", None),
-    ("Add the Sauce Labs Backpack to the cart", "click", None),
-    ("Open the shopping cart", "click", None),
+STEPS = [  # (test step in plain words, action, value); practicesoftwaretesting.com is a site built for test practice
+    ("Type pliers in the search box", "fill", "pliers"),
+    ("Click the search button", "click", None),
+    ("Click the product Combination Pliers", "click", None),
+    ("Click the Add to cart button", "click", None),
+    ("Open the cart", "click", None),
 ]
 
 loc = Locator()  # loads the bundled models once (~2 s)
 
 with sync_playwright() as pw:
     page = pw.chromium.launch().new_page()
-    page.goto("https://www.saucedemo.com/")
+    page.goto("https://practicesoftwaretesting.com")
+    page.wait_for_load_state("networkidle")
 
     for step, action, value in STEPS:
         hits = loc.find(page, step)  # 1. shortlist for this step

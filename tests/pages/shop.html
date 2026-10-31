@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Tool Shop</title>
+<style>.card{display:inline-block;border:1px solid #ccc;margin:6px;padding:6px;width:220px;cursor:pointer}
+.toast{position:fixed;top:4px;right:4px;background:#dfd;padding:6px}</style></head>
+<body>
+<header><a href="#" data-test="nav-cart" onclick="showCart();return false">Cart <span data-test="cart-quantity" id="badge"></span></a></header>
+<!-- product ids are re-seeded like a demo shop's database: tests must not depend on them -->
+<aside><h4>By category:</h4>
+<label><input type="checkbox" data-test="category-01M66ZGQ9KM34J20ZVQYPAMZ67" onchange="filter()"> Hammer</label>
+<label><input type="checkbox" data-test="category-01M66ZGQ9KQ7YB2D8YRF3WSH4E" onchange="filter()"> Pliers</label></aside>
+<main id="list"></main>
+<section id="cart" hidden><h2>Cart</h2><table><tbody id="rows"></tbody></table><p id="empty" hidden>The cart is empty.</p></section>
+<script>
+const P = [["01M66ZGQB3VBTR98C6YDM2R0N4","Claw Hammer with Shock Reduction Grip","13.41","Hammer"],
+           ["01M66ZGQAH1H4J5ASKENNY1YCT","Claw Hammer","11.48","Hammer"],
+           ["01M66ZGQAPFQHFKH4SF8WRNPEM","Combination Pliers","14.15","Pliers"]];
+let cart = [];
+function render(list){ document.getElementById('list').innerHTML = list.map(p =>
+  `<a class="card" data-test="product-${p[0]}" onclick="add('${p[0]}')"><h5 data-test="product-name">${p[1]}</h5>
+   <span data-test="product-price">$${p[2]}</span></a>`).join(''); }
+function filter(){ const on = [...document.querySelectorAll('aside input')].filter(i => i.checked)
+  .map(i => i.parentElement.innerText.trim()); render(on.length ? P.filter(p => on.includes(p[3])) : P); }
+function add(id){  // the server answers late; the toast stays a while (like many shops)
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = 'Product added to shopping cart.';
+  document.body.appendChild(t); setTimeout(() => t.remove(), 4000);
+  setTimeout(() => { cart.push(P.find(p => p[0] === id)); document.getElementById('badge').textContent = cart.length; }, 700); }
+function showCart(){ document.getElementById('list').hidden = true; const c = document.getElementById('cart'); c.hidden = false;
+  document.getElementById('rows').innerHTML = cart.map((p, i) => `<tr><td>${p[1]}</td><td>$${p[2]}</td>
+    <td><a class="btn btn-danger" onclick="del(${i})"><svg data-icon="xmark" width="12" height="12"><path d="M0 0L12 12"/></svg></a></td></tr>`).join('');
+  document.getElementById('empty').hidden = cart.length > 0; }
+function del(i){ cart.splice(i, 1); document.getElementById('badge').textContent = cart.length || ''; showCart(); }
+render(P);
+</script></body></html>

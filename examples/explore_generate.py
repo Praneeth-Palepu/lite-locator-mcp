@@ -2,7 +2,7 @@
 grounding every step on the live page (the LLM sees a few candidates per step, not the whole page).
 
     pip install lite-locator-mcp playwright langchain-core langchain-ollama    # or langchain-openai for Azure
-    python explore_generate.py https://www.saucedemo.com --pages 3 --cases 3 --out test_generated.py
+    python explore_generate.py https://practicesoftwaretesting.com --pages 3 --cases 3 --out test_generated.py
     pytest test_generated.py            # needs pytest-playwright
 
 Flow:
@@ -48,7 +48,7 @@ Reply with the number only, or 0 if none of them fits."""
 def make_llm(kind, model):
     if kind == "ollama":
         from langchain_ollama import ChatOllama
-        return ChatOllama(model=model or "qwen3:4b-instruct", temperature=0, num_ctx=8192, keep_alive=-1)
+        return ChatOllama(model=model or "qwen3:4b-instruct", temperature=0, num_ctx=8192, num_predict=1024, keep_alive=-1)
     if kind == "azure":
         import os
         from langchain_openai import AzureChatOpenAI

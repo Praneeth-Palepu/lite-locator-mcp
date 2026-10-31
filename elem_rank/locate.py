@@ -19,11 +19,12 @@ import numpy as np
 from pathlib import Path
 
 from .common import doc
+from . import stable as _stable
 
 JS = (Path(__file__).parent / "extract.js").read_text()
 ARIA = {"button", "link", "textbox", "searchbox", "checkbox", "radio", "combobox", "heading", "img", "tab", "menuitem",
         "switch", "slider", "spinbutton", "option", "listitem", "cell", "columnheader"}
-STABLE = ("plain", "card-scoped")
+STABLE = ("plain", "card-scoped", "stable")
 
 
 def locator(e):
@@ -316,7 +317,10 @@ class Locator:
         top, s = self._rank(step, docs, max)
         top = self._ordinal_first(top, els, step, _css_slot)
         resolved = [resolve(page, els[i]) if verify else (locator(els[i]), None, "unverified") for i in top]
-        hits, lines = self._page_hits(els, top, s, resolved)
+        hits, _ = self._page_hits(els, top, s, resolved)
+        if verify:  # locators with database IDs / positional CSS -> label, card heading, row or text
+            _stable.make_stable(page, hits, step, to_locator)
+        lines = [f'{h["rank"]}. {h["doc"]}\n   locator: {h["locator"]}' for h in hits]
         return self._finish(hits, lines, docs, verify and hits[0]["strategy"] not in STABLE)
 
     async def afind(self, page_or_snapshot, step, max=None, verify=True, max_elements=1500):
@@ -332,7 +336,10 @@ class Locator:
         top, s = self._rank(step, docs, max)
         top = self._ordinal_first(top, els, step, _css_slot)
         resolved = [await aresolve(page, els[i]) if verify else (locator(els[i]), None, "unverified") for i in top]
-        hits, lines = self._page_hits(els, top, s, resolved)
+        hits, _ = self._page_hits(els, top, s, resolved)
+        if verify:
+            await _stable.amake_stable(page, hits, step, to_locator)
+        lines = [f'{h["rank"]}. {h["doc"]}\n   locator: {h["locator"]}' for h in hits]
         return self._finish(hits, lines, docs, verify and hits[0]["strategy"] not in STABLE)
 
 
@@ -346,6 +353,8 @@ def to_locator(page, hit):
     """A live Playwright Locator for a find() hit (built with Playwright calls, never eval), or a Locator as is."""
     if not isinstance(hit, dict):
         return hit  # already a Locator
+    if hit.get("stable"):
+        return _stable.live(page, hit["stable"])
     e, how, js = hit["element"], hit.get("strategy", "plain"), hit.get("locator", "")
     root = page
     if how == "card-scoped":

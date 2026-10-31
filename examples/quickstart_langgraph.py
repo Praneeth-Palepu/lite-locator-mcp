@@ -19,8 +19,8 @@ from mcp.client.stdio import stdio_client
 
 from lite_locator.langchain import LOCATOR_HINT, snapshot_hook, with_lite_locator
 
-TASK = ("Go to https://www.saucedemo.com, log in as standard_user with password secret_sauce, add the Sauce Labs "
-        "Backpack to the cart, and verify the cart shows 1 item.")
+TASK = ("Go to https://practicesoftwaretesting.com, search for pliers, open Combination Pliers, add it to the cart, "
+        "and verify the cart badge in the header shows 1.")
 
 
 def llm():
@@ -28,7 +28,7 @@ def llm():
         from langchain_openai import AzureChatOpenAI
         return AzureChatOpenAI(azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT"], temperature=0)
     from langchain_ollama import ChatOllama  # free, local
-    return ChatOllama(model="qwen3:4b-instruct", temperature=0, num_ctx=8192, keep_alive=-1)
+    return ChatOllama(model="qwen3:4b-instruct", temperature=0, num_ctx=8192, num_predict=1024, keep_alive=-1)
 
 
 async def main():

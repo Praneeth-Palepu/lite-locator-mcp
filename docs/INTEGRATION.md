@@ -40,7 +40,7 @@ from langgraph.prebuilt import create_react_agent
 from lite_locator.langchain import with_lite_locator, LOCATOR_HINT, snapshot_hook
 
 tools = await load_mcp_tools(session)                 # your existing session to Playwright MCP (stdio or SSE)
-tools = with_lite_locator(tools)                      # ★1
+tools = with_lite_locator(tools, lean=True)           # ★1
 agent = create_react_agent(llm, tools,
                            prompt=LOCATOR_HINT + YOUR_SYSTEM_PROMPT,   # ★2
                            pre_model_hook=snapshot_hook)               # ★3
@@ -76,78 +76,82 @@ async with sse_client("http://<vm-host>:8931/sse") as (r, w), ClientSession(r, w
 
 ## 4. What the agent does per step afterwards
 
-Test step: *"Add the Sauce Labs Backpack to the cart"*
+Test step: *"Check the Hammer category filter"* (practicesoftwaretesting.com, Playwright MCP 0.0.83, real output)
 
-1. The LLM calls `browser_find_element(step="Add the Sauce Labs Backpack to the cart")` and gets:
+1. The LLM calls `browser_find_element(step="Check the Hammer category filter")` and gets:
    ```
-   - button "Add to cart" [ref=e54]  (card: Sauce Labs Backpack; in: main)
-   - button "Add to cart" [ref=e102] (card: Sauce Labs Onesie; in: main)
-   (2 of 47 elements, ~44 tokens instead of ~1039 for the full page.)
+   - checkbox "Hammer" [ref=e213]  (section: By category:)
+   - img "Hammer" [ref=e384]  (section: Hammer)
+   - heading "Hammer" [ref=e390]  (section: Combination Pliers)
+   (3 of 126 elements, ~40 tokens instead of ~3324 for the full page.)
    ```
-2. It calls `browser_click(ref="e54")` and gets Playwright's code line plus the result:
+2. It calls `browser_click(target="e213")` and gets Playwright's code line plus the result:
    ```
-   await page.locator('[data-test="add-to-cart-sauce-labs-backpack"]').click();
+   ### Ran Playwright code
+   await page.getByLabel("Hammer", { exact: true }).click();
    ### Result
    Same page. Changes:
-   + button "Cart, 1 items"
-   - button "Cart, empty"
-   + button "Remove"  (card: Sauce Labs Backpack)
+   ~ checkbox "Hammer"  ->  checkbox "Hammer" [checked] [ref=e213]
+   - link "Combination Pliers … $14.15"
    ```
-3. Next step. If no candidate fits, or the step checks a whole list ("all 6 products have prices"), the LLM calls
+   Playwright MCP recorded `page.locator('[data-test="category-01M672YFHBDENHCS5G6A9043EY"]')`; the ID changes
+   whenever the shop's database is re-seeded, so the wrapper replaced it with the label (`stable_code=True`, default).
+3. Next step. If no candidate fits, or the step checks a whole list ("all products are hammers"), the LLM calls
    `browser_snapshot` (the full tree): the fallback is always there.
 
 Possible results after an action: `Navigated to a new page …` (with a short page summary), `Same page. Changes: …`,
 `No change detected within 3 s …` (after waiting for slow responses; the LLM is told not to repeat irreversible
 actions), plus `A new tab opened: …` / `A browser dialog appeared: …` when that happens.
 
-## 5. Generating the test script
+## 5. Cheaper still: plan once, let the library execute (`TestRunner`, 0.1.6)
 
-Playwright MCP reports the exact code for every action ("Ran Playwright code"), and the wrapped tools keep it. Collect
-those lines from the tool messages after the run (as `script_from()` in the example does):
+An agent re-sends the whole conversation (tool definitions, test case, every earlier step) on every LLM call, so the
+cost grows with every step. For executing manual test cases you don't need an agent loop:
 
-```js
-import { test, expect } from '@playwright/test';
-test('Login and add the backpack to the cart', async ({ page }) => {
-  await page.goto('https://www.saucedemo.com');
-  await page.locator('[data-test="username"]').fill('standard_user');
-  await page.locator('[data-test="password"]').fill('secret_sauce');
-  await page.locator('[data-test="login-button"]').click();
-  await page.locator('[data-test="add-to-cart-sauce-labs-backpack"]').click();
-});
+```python
+from lite_locator.runner import TestRunner
+runner = TestRunner(llm, planner=json_mode_llm)   # your LangChain chat model; planner optional (JSON mode helps)
+result = runner.run(page, manual_test_case_text)   # sync Playwright page
+result.passed, result.log, result.usage
+open("case.spec.js", "w").write(result.spec("Case title"))
 ```
 
-That is the real output of `examples/agent_testgen.py` on that test case. Assertions: verification steps are judged
-by the LLM from the results; to get `expect(...)` lines in the script, give the agent Playwright MCP's verify tools
-(newer versions with `--caps verify`) or add them from the step text in your script generator.
+- One LLM call plans the case into steps; the library finds and acts on each element, and asks the LLM a ~300-token
+  question (step + short list) only when it is unsure. Verify steps are checked in the browser by code.
+- Failed case: run it again with `TestRunner(llm, strict=True)` (the LLM chooses every element): the healer.
+- Command line for a whole suite: `python examples/run_test_cases.py --cases cases.txt --out specs/ --check-scripts`.
 
-For Python code generation without MCP (agent drives a Playwright page directly), each `Locator.find()` hit has a
-ready Python locator: `hits[0]["py"]` → `page.locator("[data-test=\"username\"]")`.
+Measured on 34 test cases of one user story (practicesoftwaretesting.com, local Qwen3 4B): the agent used 658 LLM
+calls and 2.55M tokens (30/34 passing after healing); TestRunner used 68 calls and 27.5k tokens (34/34 passing, all 34
+scripts passing `npx playwright test`).
 
-## 6. Measuring the savings on your own flows
+Use the agent (sections 3–4) when the test needs open-ended exploration; use TestRunner for executing written test
+cases, which is most of a regression suite.
 
-Run the same test case twice, with and without the three lines, and compare the LLM's token usage (every LangChain
-chat model reports `usage_metadata` on its messages):
+## 6. Generating the test script
+
+With TestRunner, `result.spec(title)` is the script. With the agent, Playwright MCP reports the exact code for every
+action ("Ran Playwright code") and the wrapped tools keep it (with stable locators). Collect those lines from the tool
+messages after the run, as `script_from()` in [`examples/agent_testgen.py`](../examples/agent_testgen.py) does.
+
+For Python code generation without MCP, each `Locator.find()` hit has a ready Python locator: `hits[0]["py"]`.
+
+## 7. Measuring the savings on your own flows
+
+Run the same test case with and without lite-locator and compare the LLM's token usage (every LangChain chat model
+reports `usage_metadata` on its messages):
 
 ```bash
-python agent_testgen.py --case case.txt --mcp-url http://<vm>:8931/sse            # with lite-locator
+python agent_testgen.py --case case.txt --mcp-url http://<vm>:8931/sse            # agent with lite-locator
 python agent_testgen.py --case case.txt --mcp-url http://<vm>:8931/sse --no-lite  # plain Playwright MCP
+python run_test_cases.py --cases case.txt --out specs/                             # TestRunner
 ```
 
-Measured here (SauceDemo, local Qwen3 4B, Playwright MCP 0.0.83):
+Two lessons from our runs: on small pages the biggest agent cost is the tool definitions themselves, sent with every
+LLM call (give the agent only the tools it needs, `keep=` and `lean=True`); and the conversation an agent re-sends
+grows with every step, which TestRunner avoids. Numbers vary with the model and the pages: measure on your own suites.
 
-| Setup | Result | LLM input tokens |
-|---|---|---|
-| plain Playwright MCP, all tools | FAIL (could not locate the login form) | 65,978 |
-| lite-locator, all tools | PASS, correct script | 64,660 |
-| lite-locator, only the 10 tools test execution needs | PASS, correct script | 31,746 |
-
-Two lessons: a small model completes the flow only with the shortlist; and on small pages the biggest cost is the
-**tool definitions themselves**, sent with every LLM call: give the agent only the tools it needs (the example's
-default). On heavy pages (10,000+ tokens per snapshot) the shortlist and the change reports dominate the savings
-(13-step SauceDemo replay: 220,771 → 29,119 tokens re-read across calls). Measure on your own suites; numbers vary
-with the model and the pages.
-
-## 7. Rolling out safely
+## 8. Rolling out safely
 
 1. **Shadow run:** run your existing suite as usual and, in parallel, the same cases with the three lines. Compare
    pass/fail per case and tokens. No change to production runs.
@@ -156,7 +160,7 @@ with the model and the pages.
    (non-English text, unusual widgets). They stay correct, just cost more.
 4. Everything is reversible by removing the three lines.
 
-## 8. Limits
+## 9. Limits
 
 - English pages (the models are English); other languages fall back to the full snapshot more often.
 - Whole-page / whole-list verifications need the full snapshot (the hint says so).
@@ -166,7 +170,7 @@ with the model and the pages.
 - `langchain-mcp-adapters` 0.0.4 produces tool schemas that some LLM servers reject (seen with Ollama, with or without
   lite-locator); newer adapter versions are fine.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Fix |
 |---|---|

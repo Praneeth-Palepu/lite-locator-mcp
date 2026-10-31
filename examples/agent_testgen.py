@@ -11,11 +11,12 @@ reports for each action, and prints how many tokens the LLM used.
     python agent_testgen.py --case case.txt --mcp-cmd "..." --no-lite
 
 case.txt is a manual test case in plain words, e.g.:
-    Title: Login and add the backpack to the cart
-    1. Open https://www.saucedemo.com
-    2. Log in as standard_user / secret_sauce
-    3. Add the Sauce Labs Backpack to the cart
-    4. Verify the cart shows 1 item
+    Title: Search and add a product to the cart
+    1. Open https://practicesoftwaretesting.com
+    2. Type pliers in the search box and click the search button
+    3. Click the product Combination Pliers
+    4. Click the Add to cart button
+    5. Verify the cart badge in the header shows 1
 
 LLM: Azure OpenAI when AZURE_OPENAI_ENDPOINT is set (also AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT,
 OPENAI_API_VERSION), else a local Ollama model. Works with mcp 1.x clients (tested with mcp 1.3 and
@@ -46,7 +47,7 @@ def make_llm():
         return AzureChatOpenAI(azure_deployment=os.environ["AZURE_OPENAI_DEPLOYMENT"], temperature=0)
     from langchain_ollama import ChatOllama
     return ChatOllama(model=os.environ.get("OLLAMA_MODEL", "qwen3:4b-instruct"), temperature=0, num_ctx=8192,
-                      keep_alive=-1)
+                      num_predict=1024, keep_alive=-1)     # cap replies: a runaway answer would hold the model
 
 
 @asynccontextmanager

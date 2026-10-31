@@ -2,6 +2,47 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.6 (2026-10-31)
+**Wins (measured):** one user story on practicesoftwaretesting.com, 34 manual test cases, local Qwen3 4B.
+LangGraph agent + Playwright MCP + lite-locator 0.1.5: 658 LLM calls, 2,528,293 input + 24,081 output tokens, 30/34
+passing after healing, and the healed scripts broke again after the site's next data reset. `TestRunner` (0.1.6):
+68 LLM calls, 22,413 input + 5,083 output tokens, 34/34 passing, all 34 generated scripts passing
+`npx playwright test` (1 and 4 parallel workers, twice). At GPT-5.4 prices: ≈ $6.68 → ≈ $0.13 per user story.
+A second full run: 33/34 (a value missing from one plan; now taken from the test case), 84 calls, 27,055 + 5,724
+tokens.
+
+**What:**
+- `lite_locator.runner.TestRunner` (`elem_rank/runner.py`): plan once, the library executes. One LLM call turns a
+  manual test case into steps; the library finds and acts on each element and asks the LLM (step + short list, ~300
+  tokens) only when its top match is not clearly ahead, does not fit the action, or is not unique; an element whose
+  own title is exactly what the step names is taken directly ("Claw Hammer", not "Claw Hammer with Shock Reduction
+  Grip"; "delete button for Claw Hammer" names a button, not the product). A click that changes nothing goes back to
+  the LLM. Verify steps (text / absent / URL / value) are checked in the browser by code; a value mismatch is shown to
+  the LLM before the step fails; a label's value next to it ("Total  $22.96") is found without false passes; a toast
+  that faded before the check counts when the previous action reported it. Values come from the test case text
+  (garbled copies such as "$28. 30" or "Slip Joint P's" are repaired from it). `strict=True` = the LLM chooses
+  every element (the healer). `Result.spec(title)` = the Playwright test.
+- Stable locators (`elem_rank/stable.py`): locators with database IDs or positional CSS paths are replaced by label,
+  card heading, table row or text, only when that matches exactly one element; in `Locator.find()` hits
+  (`locator`, `py`, `to_locator`), in TestRunner scripts, and in the code Playwright MCP reports through
+  `with_lite_locator(..., stable_code=True)` (default; one `browser_evaluate` per action). Positions the step asks
+  for ("the first product") are kept.
+- Generated scripts wait for what an action changed: the new page title after a navigation, the test-id element whose
+  text changed (cart badge 1 → 2), and network idle after opening a page.
+- Icon-only controls are extracted and described by their icon and table row (`icon=xmark (remove / delete / close)
+  | class=btn btn-danger | row: Claw Hammer`); classes describe elements that have nothing else.
+- `with_lite_locator(..., lean=True)`: drops `doubleClick`, `button`, `modifiers` (click) and `slowly` (type) from the
+  tool definitions and calls. Fewer tokens per call, and typing replaces a field's value (with `slowly` a model typed
+  "0" after the existing "1" and reported a false defect).
+- Example `examples/run_test_cases.py` (suite runner with healer, script check and token report); examples and docs
+  use practicesoftwaretesting.com.
+**Why:** owner asked to cut the cost of generating and executing test cases without losing quality; a 34-case run
+with the agent cost ≈ 2.55M tokens, mostly the conversation re-sent on every call and healing of scripts that used
+database IDs.
+**Checked:** see `ci/reports/0.1.6.md`; new tests on a local shop page (`tests/pages/shop.html`: re-seeded product IDs,
+look-alike product names, a late cart update with a lingering toast, icon-only delete buttons in a table) for the
+runner, stable locators, label/value checks, plan repairs, the wrapper's stable code and lean schemas.
+
 ## 0.1.5 (2026-10-30)
 **What** (all found by a complex flow on practicesoftwaretesting.com: search → sort → first product → quantity → add to
 cart → cart; each fix is generic and has a test on a local page):
@@ -44,7 +85,7 @@ checkbox, React state/city dropdowns, submit, confirmation dialog): PASS with th
 - Actions: when nothing changes, keep checking for up to 3 s (slow server responses) before reporting; the "no
   change" message now says not to repeat a submit / payment / delete and to check with browser_snapshot. New tabs and
   browser dialogs are reported (`act(..., dialog="dismiss"|"accept")`).
-- Change lines name the card for repeated buttons ("+ button Remove (card: Sauce Labs Backpack)").
+- Change lines name the card for repeated buttons ("+ button Remove (card: <product name>)").
 - Changes that happen by themselves (tickers, carousels) are filtered: the page is compared with itself just before
   the action.
 - Hint and tool descriptions: whole-page / whole-list checks use browser_snapshot; don't repeat irreversible actions.
@@ -72,7 +113,7 @@ summary, the added (+) / removed (-) / changed (~) elements, or "No visible chan
 `observe()`; LangChain `with_lite_locator(diffs=True)` wraps the Playwright action tools; `snapshot_hook`
 (LangGraph pre_model_hook) hides superseded full snapshots; MCP proxy `--full-snapshots` to opt out.
 **Why:** snapshots after every action pile up in the agent's history and every LLM call re-reads them.
-**Checked:** SauceDemo 13-step checkout, tokens re-read across LLM calls: plain Playwright MCP 220,771 → 29,119
+**Checked:** a 13-step demo-shop checkout, tokens re-read across LLM calls: plain Playwright MCP 220,771 → 29,119
 (−87%); LangGraph agent (local Qwen 4B) completed login → add to cart → verify cart on its own. Manual checks only
 (no automated suite yet).
 

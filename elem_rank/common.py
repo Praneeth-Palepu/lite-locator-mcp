@@ -34,6 +34,19 @@ def label_of(e):
     return (e.get("text") or "").strip()[:80]
 
 
+ICON_MEANS = {"xmark": "remove / delete / close", "times": "remove / delete / close", "close": "close / remove",
+              "trash": "delete", "delete": "delete", "remove": "remove", "plus": "add / increase", "add": "add",
+              "minus": "remove / decrease", "pen": "edit", "pencil": "edit", "edit": "edit", "cart": "cart",
+              "basket": "cart", "search": "search", "magnifying": "search", "heart": "favorite", "star": "favorite",
+              "gear": "settings", "cog": "settings", "bars": "menu", "user": "account", "bell": "notifications",
+              "chevron-left": "previous", "chevron-right": "next", "arrow-left": "back", "download": "download"}
+
+
+def _icon_key(icon):
+    icon = icon.lower()
+    return next((k for k in sorted(ICON_MEANS, key=len, reverse=True) if k in icon), None)
+
+
 def doc(e, max_chars=360):
     """Compact text view of an element: role, name, text, key attributes and context."""
     a = e.get("attrs", {})
@@ -48,6 +61,14 @@ def doc(e, max_chars=360):
           ("type", "placeholder", "name", "id", "testid", "aria_label", "title", "alt", "value", "href") if a.get(k)]
     if kv:
         parts.append(" ".join(kv)[:160])
+    if e.get("icon"):  # icon-only control: say what the icon usually means
+        parts.append(f"icon={e['icon']}" + (f" ({ICON_MEANS[k]})" if (k := _icon_key(e["icon"])) else ""))
+    cls = a.get("cls", "")
+    # nothing else describes it: its classes (btn-danger, close, remove ...)
+    if not (e.get("name") or t or kv) and cls and e.get("role") in ("generic", "button", "link"):
+        parts.append("class=" + cls[:60])
+    if e.get("row"):  # table row it sits in, by its first cell
+        parts.append("row: " + e["row"][:60])
     if e.get("card"):  # only set for repeated labels ("Buy Now" x6): which card this copy belongs to
         parts.append("card: " + e["card"][:80])
     if e.get("near"):

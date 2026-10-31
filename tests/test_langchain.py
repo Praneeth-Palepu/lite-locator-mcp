@@ -104,3 +104,49 @@ def test_keep_limits_what_the_llm_sees_but_not_what_the_library_uses(loc):
     assert [t.name for t in out] == ["browser_find_element", "browser_click"]
     first = next(x for x in out[0].invoke({"step": "Add the product to the cart"}).splitlines() if "[ref=" in x)
     assert "[ref=e2]" in first  # browser_evaluate was still used although the LLM doesn't see it
+
+
+def _code_tools(seen):
+    code = ("### Ran Playwright code\n```js\n"
+            "await page.locator('[data-test=\"category-01M66ZGQ9KM34J20ZVQYPAMZ67\"]').check();\n```\n")
+
+    def browser_click(ref: str, element: str = "", doubleClick: bool = False, modifiers: list | None = None) -> str:
+        seen["click"] = dict(ref=ref, doubleClick=doubleClick, modifiers=modifiers)
+        return code + PAGE2
+
+    def browser_evaluate(function: str, ref: str = "", element: str = "") -> str:
+        seen["eval"] = ref
+        return '### Result\n"[{\\"kind\\": \\"label\\", \\"text\\": \\"Hammer\\"}]"'
+
+    return [StructuredTool.from_function(lambda: PAGE1, name="browser_snapshot", description="snapshot"),
+            StructuredTool.from_function(browser_click, name="browser_click", description="click"),
+            StructuredTool.from_function(browser_evaluate, name="browser_evaluate", description="evaluate")]
+
+
+def test_volatile_locator_in_code_is_made_stable(loc):
+    seen = {}
+    by = {t.name: t for t in with_lite_locator(_code_tools(seen), locator=loc)}
+    out = by["browser_click"].invoke({"ref": "e2"})
+    assert seen["eval"] == "e2"
+    assert 'page.getByLabel("Hammer", { exact: true }).check()' in out and "01M66" not in out
+
+
+def test_stable_code_can_be_turned_off(loc):
+    by = {t.name: t for t in with_lite_locator(_code_tools({}), locator=loc, stable_code=False)}
+    assert "category-01M66ZGQ9KM34J20ZVQYPAMZ67" in by["browser_click"].invoke({"ref": "e2"})
+
+
+def test_lean_drops_options_the_agent_does_not_need(loc):
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+    raw = _code_tools({})
+    raw[1] = StructuredTool(name="browser_click", description="click", func=raw[1].func,
+                            args_schema={"type": "object", "required": ["ref"], "properties": {
+                                "ref": {"type": "string"}, "element": {"type": "string"},
+                                "doubleClick": {"type": "boolean"}, "modifiers": {"type": "array"}}})
+    seen = {}
+    raw[1].func = _code_tools(seen)[1].func
+    by = {t.name: t for t in with_lite_locator(raw, locator=loc, lean=True)}
+    props = convert_to_openai_tool(by["browser_click"])["function"]["parameters"]["properties"]
+    assert "doubleClick" not in props and "modifiers" not in props and "ref" in props
+    by["browser_click"].invoke({"ref": "e2", "doubleClick": True})
+    assert seen["click"]["doubleClick"] is False      # an option the LLM still sends is dropped

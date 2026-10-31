@@ -8,7 +8,8 @@
     submit: 'button', reset: 'button', image: 'button', number: 'spinbutton'};
   const INTERACTIVE = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[contenteditable=""],[contenteditable=true],' +
     '[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=switch],[role=combobox],' +
-    '[role=textbox],[role=searchbox],[role=option],[role=slider],[onclick],[tabindex]:not([tabindex="-1"])';
+    '[role=textbox],[role=searchbox],[role=option],[role=slider],[onclick],[tabindex]:not([tabindex="-1"]),' +
+    'a:not([href]):has(svg,i,img),[class~=btn]:not(div)';  // icon-only anchors / buttons styled by class
   const LABELLED = 'h1,h2,h3,h4,h5,h6,[role=heading],label,legend,th,img[alt]';
   const clean = (s, n = 160) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
   const visible = (el) => {
@@ -45,6 +46,24 @@
     let t = clean(el.innerText);
     if (!t) { const img = el.querySelector('img[alt],svg[aria-label],[aria-label]'); if (img) t = clean(img.getAttribute('alt') || img.getAttribute('aria-label')); }
     return t || clean(el.getAttribute('title'));
+  };
+  // icon-only controls (✕, 🗑, +): the icon's name from icon-font classes or SVG attributes, e.g. "xmark", "trash"
+  const iconOf = (el) => {
+    const svg = el.querySelector('svg[data-icon]');
+    if (svg) return clean(svg.getAttribute('data-icon'), 30);
+    for (const i of el.querySelectorAll('[class*="fa-"],[class*="bi-"],[class*="icon-"],[class*="material-icons"]')) {
+      const m = (i.getAttribute('class') || '').match(/(?:^|\s)(?:fa|bi|icon)-(?!icon\b)([a-z][a-z0-9-]*)/);
+      if (m) return m[1];
+      if (/material-icons/.test(i.getAttribute('class') || '')) return clean(i.textContent, 30);
+    }
+    return '';
+  };
+  // table rows: the row's first text cell ("Claw Hammer"), so "delete Claw Hammer" finds that row's button
+  const rowOf = (el) => {
+    const tr = el.closest('tr');
+    if (!tr || el.tagName === 'TR') return '';
+    const c = [...tr.children].find(td => clean(td.innerText));
+    return c && !c.contains(el) ? clean(c.innerText, 60) : '';
   };
   const ownText = (el) => clean([...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' '));
   const prevText = (el) => {
@@ -103,6 +122,7 @@
       attrs: {id: a('id'), name: a('name'), type: a('type'), placeholder: a('placeholder'), aria_label: a('aria-label'),
               title: a('title'), alt: a('alt'), value: ['button', 'submit', 'reset'].includes((el.type || '').toLowerCase()) ? a('value') : '',
               href, testid: a('data-testid') || a('data-test') || a('data-qa'), testid_attr: ['data-testid', 'data-test', 'data-qa'].find(k => a(k)) || '', cls: clean((el.getAttribute('class') || '').split(/\s+/).slice(0, 4).join(' '), 80)},
+      icon: (el.innerText || '').trim() ? '' : iconOf(el), row: rowOf(el),
       near: prevText(el), heading: sectionHeading(el), landmark: landmark(el),
       box: [Math.round(r.x), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height)],
       in_viewport: r.top < innerHeight && r.bottom > 0, css: cssPath(el),
