@@ -9,8 +9,9 @@ HOSTILE = 'x"); import os; os.system("echo pwned"); ("\\\n'
 def test_preference_order():
     assert locator({"attrs": {"testid": "u", "testid_attr": "data-testid"}}) == 'page.getByTestId("u")'
     assert locator({"attrs": {"testid": "u", "testid_attr": "data-test"}}) == "page.locator('[data-test=\"u\"]')"
-    assert locator({"role": "button", "name": "Go", "attrs": {}}).startswith('page.getByRole("button"')
-    assert locator({"attrs": {"placeholder": "Email"}}) == 'page.getByPlaceholder("Email")'
+    # exact, like the Python locator: "Cart" must not also match "Add to cart"
+    assert locator({"role": "link", "name": "Cart", "attrs": {}}) == 'page.getByRole("link", { name: "Cart", exact: true })'
+    assert locator({"attrs": {"placeholder": "Email"}}) == 'page.getByPlaceholder("Email", { exact: true })'
 
 
 def test_python_locator_variants():

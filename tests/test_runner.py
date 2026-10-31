@@ -153,3 +153,84 @@ def test_missing_verify_value_is_taken_from_the_step(page):
     page.set_content("<p>Combination Pliers</p>")
     res = r.run(page, "case", steps=steps)
     assert res.log[0]["ok"] and not res.log[1]["ok"] and "no expected value" in res.log[1]["info"]
+
+
+def test_failed_run_never_gives_a_passing_script(page):
+    steps = [{"step": "Click the gift card button", "op": "click", "target": "gift card button"}]
+    page.set_content("<p>nothing here</p>")
+    res = TestRunner(FakeLLM(steps, choice="0")).run(page, "case", steps=steps)
+    assert not res.passed and "test.fixme(" in res.spec("t") and "NOT RECORDED" in res.spec("t")
+
+
+def test_browser_popup_is_checked_in_the_script(page):
+    page.set_content("<button onclick=\"alert('Product added')\">Add to cart</button>")
+    steps = [{"step": "Click Add to cart", "op": "click", "target": "Add to cart"},
+             {"step": 'Verify the popup says "Product added"', "op": "verify_text", "value": "Product added"}]
+    res = TestRunner(FakeLLM(steps)).run(page, "case", steps=steps)
+    assert res.passed, res.log
+    code = res.spec("t")
+    assert "page.on('dialog'" in code and "dialogs.join(' | ')).toContain(\"Product added\")" in code
+
+
+def test_hidden_dialog_is_opened_first(page):
+    page.set_content("""<button onclick="document.getElementById('d').hidden=false">Log in</button>
+      <div id="d" hidden><label>Username <input id="u"></label><button>Submit</button></div>""")
+    steps = [{"step": "Type qa_user in the username field", "op": "type", "target": "username field", "value": "qa_user"}]
+    res = TestRunner(FakeLLM(steps)).run(page, "case", steps=steps)
+    assert res.passed, res.log
+    assert page.locator("#u").input_value() == "qa_user"
+    assert res.lines[0].endswith(".click();") and "fill(\"qa_user\")" in res.lines[-1]     # the opening click is recorded
+
+
+def test_text_split_across_elements(page):
+    page.set_content("<h3>$360 <small>*includes tax</small></h3>")
+    steps = [{"step": 'Verify "$360 *includes tax" is shown', "op": "verify_text", "value": "$360 *includes tax"}]
+    res = TestRunner(FakeLLM(steps), wait=1).run(page, "case", steps=steps)
+    assert res.passed
+
+
+def test_select_in_a_text_field_types_it(page):
+    page.set_content("<label>Month: <input id='m'></label>")
+    steps = [{"step": "Select 12 as the month", "op": "select", "target": "month", "value": "12"}]
+    res = TestRunner(FakeLLM(steps)).run(page, "case", steps=steps)
+    assert res.passed, res.log
+    assert page.locator("#m").input_value() == "12"
+
+
+def test_one_sentence_many_steps_each_finds_its_own_field(page):
+    page.set_content("""<form onsubmit="event.preventDefault(); document.getElementById('ok').hidden=false">
+      <label>Email <input id="e"></label><label>Name <input id="n"></label>
+      <label>Message <textarea id="m"></textarea></label><button>Send message</button></form>
+      <p id="ok" hidden>Thanks for the message!!</p>""")
+    sentence = 'Send the message "Hi" with email "qa@example.com" and name "QA Bot"'
+    plan = [{"step": sentence, "op": "type", "target": "email field", "value": "qa@example.com"},
+            {"step": sentence, "op": "type", "target": "name field", "value": "QA Bot"},
+            {"step": sentence, "op": "type", "target": "message field", "value": "Hi"},
+            {"step": sentence, "op": "click", "target": "send message button"},
+            {"step": 'Then I see "Thanks for the message!!"', "op": "verify_text", "value": "Thanks for the message!!"}]
+    r = TestRunner(FakeLLM(plan, choice="1"))
+    res = r.run(page, sentence, steps=r.plan(sentence))
+    assert res.passed, res.log
+    assert [page.locator(f"#{i}").input_value() for i in "enm"] == ["qa@example.com", "QA Bot", "Hi"]
+
+
+def test_any_item_means_the_first(page):
+    page.set_content("<h1 id=h>Phones</h1><ul>" + "".join(
+        f"<li><a href='#p{i}' onclick=\"document.getElementById('h').textContent='Phone {i} details'\">Phone {i}</a></li>"
+        for i in (7, 3, 5)) + "</ul>")
+    plan = [{"step": "Open any phone", "op": "click", "target": "any phone"}]
+    r = TestRunner(FakeLLM(plan, choice="1"))
+    res = r.run(page, "Open any phone", steps=r.plan("Open any phone"))
+    assert res.passed and page.locator("#h").inner_text() == "Phone 7 details"
+
+
+def test_named_target_is_not_replaced_by_a_partial_match(page):
+    page.set_content("""<label><input type=checkbox> Hammer</label>
+      <div id=list></div><script>setTimeout(() => { document.getElementById('list').innerHTML =
+        '<a href="#c" onclick="document.body.insertAdjacentHTML(\\'beforeend\\', ' +
+        '\\'<h1>Claw Hammer details</h1>\\')">Claw Hammer</a>' +
+        ' <a href="#t">Thor Hammer</a>' }, 1200)</script>""")
+    steps = [{"step": "Click the product Claw Hammer", "op": "click", "target": "product Claw Hammer"}]
+    res = TestRunner(FakeLLM(steps, choice="0")).run(page, "case", steps=steps)
+    assert not page.locator("input").is_checked()       # never clicked the "Hammer" filter
+    assert res.passed and page.get_by_text("Claw Hammer details").count() == 1, res.log

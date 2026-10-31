@@ -37,11 +37,11 @@ def locator(e):
             return f'page.getByTestId("{a["testid"]}")'
         return f"page.locator('[{attr}=\"{a['testid']}\"]')"
     if e.get("role") in ARIA and name and len(name) <= 80:
-        return f'page.getByRole("{e["role"]}", {{ name: "{name}" }})'
+        return f'page.getByRole("{e["role"]}", {{ name: "{name}", exact: true }})'
     if a.get("placeholder"):
-        return f'page.getByPlaceholder("{a["placeholder"]}")'
+        return f'page.getByPlaceholder("{a["placeholder"]}", {{ exact: true }})'
     if e.get("kind") == "text" and e.get("text") and len(e["text"]) <= 80:
-        return f'page.getByText("{e["text"]}")'
+        return f'page.getByText("{e["text"]}", {{ exact: true }})'
     return f'page.locator("{e.get("css", "")}")'
 
 

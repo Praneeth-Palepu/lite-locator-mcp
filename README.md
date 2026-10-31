@@ -104,6 +104,14 @@ await page.getByRole('row').filter({ hasText: "Claw Hammer" }).locator("a.btn.bt
 await expect(page.getByText("Claw Hammer").filter({ visible: true })).toHaveCount(0);
 ```
 
+Real test cases are messier than the one above. Tested with 16 cases on another site written as "Steps | Expected
+Result" rows with preconditions, one-line prose ("add any phone to the cart and check it shows up"), Gherkin and jargon
+(PLP → PDP, ATC): 0.1.7 passes 13/16 (13 of the 15 that can pass) with a local 4B model and 12/16 with a stronger model for the planning call
+(one case has no test data on purpose). What it handles: preconditions become setup steps, one sentence becomes
+several single actions, dialogs and menus the case doesn't mention are opened first, browser popups are checked, and
+"any item" means the first one listed. What it can't do: invent data the case doesn't give ("log in with valid
+credentials"), so put the data in the test case.
+
 Quality guards: the library acts alone only when its top match is clearly ahead, fits the action (type → a text box)
 and is unique, or when the element's own title is exactly what the step names ("Claw Hammer", not "Claw Hammer with
 Shock Reduction Grip"); a click that changes nothing goes back to the LLM; verify steps are checked in the browser by

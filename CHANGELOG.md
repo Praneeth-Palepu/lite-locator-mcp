@@ -2,6 +2,37 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.7 (2026-10-31)
+**Wins (measured):** test cases written the way teams really write them: 16 cases on demoblaze.com in four styles
+("Steps | Expected Result" rows with preconditions, one-line prose, Gherkin, jargon such as PLP/PDP/ATC), one of them
+with missing test data on purpose. 0.1.6 as published: 0/16. 0.1.7 with a local 4B model: 13/16 (13 of the 15 that can pass); with a stronger
+model for the one planning call per case: 12/16 (12 of the 15 that can pass). Regression on the 0.1.6 suite
+(practicesoftwaretesting.com, 34 cases): 33/34 plus all scripts passing; the one failure is a real change on the site (Bolt Cutters now shows under the Hammer + Pliers filters, which that test case says it must not).
+
+**What** (all generic; each has a test on a local page):
+- Opening a page waits for load with a time cap and goes on when a site never stops loading (polling, ads); the
+  script does the same.
+- Browser popups (alert / confirm) are accepted; their text is checked, and the script records and asserts it
+  (`page.on('dialog')`, `expect.poll`). A click whose only effect is a popup or a new tab counts as a change.
+- Implicit steps: when a step's element is not on the page (inside a dialog or menu, or on another page), the LLM picks
+  one element to click first (at most twice per step); the extra click is recorded in the script.
+- One sentence that becomes several steps ("send the message M with email E and name N") ranks each step by its own
+  target, so each value goes to its own field. "Any" / "some" item without a name = the first one listed.
+- Plans: test cases in any format (step/expected rows, Gherkin, prose); preconditions become setup steps; one action
+  per step; values (URLs, expected texts) are checked against the whole test case, not only the step; a check of
+  several quoted texts becomes one check per text; "open" without a full URL is a click; a step written as a function
+  call is turned back into words; the example in the planner prompt uses made-up values (a small model copied real
+  product names from it).
+- Checks: text split across elements ("$360 <small>*includes tax</small>") is found; values that load late are looked
+  for again; "select 12 as month" in a plain text field types it; "type" only considers text boxes.
+- Scripts: role / placeholder / text locators are exact, as the Python locators already were ("Cart" no longer also
+  matches "Add to cart"). A failed case gives a script marked `test.fixme` with the failing step as a comment, so an
+  incomplete script never passes; the example reports it as "incomplete" and writes a per-step log
+  (`<id>.log.json`).
+- Examples cap the local model's reply length (`num_predict`): one runaway reply held a shared model for 40 minutes.
+**Why:** owner asked whether real, messier test cases work, measured on a different site, with generic fixes only.
+**Checked:** see `ci/reports/0.1.7.md`.
+
 ## 0.1.6 (2026-10-31)
 **Wins (measured):** one user story on practicesoftwaretesting.com, 34 manual test cases, local Qwen3 4B.
 LangGraph agent + Playwright MCP + lite-locator 0.1.5: 658 LLM calls, 2,528,293 input + 24,081 output tokens, 30/34

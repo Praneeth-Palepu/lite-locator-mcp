@@ -39,9 +39,22 @@ verify_value(target, value=expected value or text of that one element)
 "step" is the original sentence. target describes the element in plain words. "X is listed / shown" -> verify_text
 with X; "is not listed" / "no longer listed" -> verify_absent; an exact message in quotes -> verify_text with that
 message; "the field / badge / first item shows N" -> verify_value. A verify value is only the text expected on the page
-(a message, a name, a price such as $28.30), never words that say where it is ("line total", "the cart shows").
-Example: {"steps": [{"step": "Type pliers in the search box", "op": "type", "target": "search box", "value": "pliers"},
-{"step": "Verify the product Thor Hammer is not listed", "op": "verify_absent", "value": "Thor Hammer"}]}
+(a message, a name, a price such as $28.30), never words that say where it is ("line total", "the cart shows"),
+copied word for word from the test case; one verify step per expected text ("name X, price Y" = two steps).
+Test cases come in any format ("Steps | Expected Result" rows, Gherkin Given/When/Then, prose, abbreviations): turn
+every action and every expected result into steps, in order. Preconditions ("Pre-req: X is in the cart", "Given I have
+opened X") become the steps that create that state. Every step is ONE action on ONE element, so a sentence that does
+several things becomes several steps, with nothing left out:
+- "Add X to the cart" = click the product X, then click the Add to cart button (then accept a popup if one is mentioned)
+- "Login as U / P" = click the login link, type U in the username field, type P in the password field, click the
+  Log in button
+- "Send the message M" or "submit the form" = type each field, then click the send / submit button
+- "Go to checkout" = click the cart link, then click the checkout / place order button
+- "any" / "some" item (no name given) = the first one listed
+Use open only with a full URL; going to a page by its link ("open the cart") is a click.
+Example (made-up values; take every real value from the test case, never from this example):
+{"steps": [{"step": "Type blue widget in the search box", "op": "type", "target": "search box", "value": "blue widget"},
+{"step": "Verify the product Example Item is not listed", "op": "verify_absent", "value": "Example Item"}]}
 Answer with JSON only.
 
 Test case:
@@ -50,6 +63,14 @@ CHOOSE = """Test step: {step}
 Candidate elements on the page:
 {cands}
 {note}Reply with only the number of the element this step acts on, or 0 if none fits."""
+
+REACH = """Test step: {step}
+The element this step needs is not on the page yet: it is probably inside a dialog or menu that must be opened first,
+or on another page (e.g. a product page). Elements on the page now:
+{cands}
+Reply with only the number of the ONE element to click first to get there, or 0 if none of them leads there."""
+
+ANY = re.compile(r"\b(?:any|some|a random|whichever)\b(?! of the following)", re.I)
 
 FIT = {"type": {"textbox", "searchbox", "spinbutton", "combobox"}, "select": {"combobox", "listbox"},
        "check": {"checkbox", "radio", "switch"}, "uncheck": {"checkbox", "switch"}}
@@ -101,16 +122,28 @@ class Result:
     log: list
     lines: list
     usage: dict = field(default_factory=dict)
+    popups: list = field(default_factory=list)      # browser dialog messages seen during the run
 
     @property
     def passed(self):
         return bool(self.log) and all(x["ok"] for x in self.log)
 
     def spec(self, title="test"):
-        """The Playwright test (JavaScript) for this run."""
-        body = "\n".join("  " + x for x in self.lines)
+        """The Playwright test (JavaScript) for this run. A failed run gives a test marked fixme, with the failing
+        step as a comment, so an incomplete script never passes by accident."""
+        lines = self.lines
+        if self.popups or any("dialogs" in x for x in lines):     # popups: accept them, keep their text
+            lines = ["const dialogs = [];", "page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });"] + lines
+        body = "\n".join("  " + x for x in lines)
+        fn = "test"
+        if not self.passed:
+            bad = next((x for x in self.log if not x["ok"]), None)
+            fn = "test.fixme"
+            if bad:
+                info = bad["info"][:160].replace("\n", " ")
+                body += f"\n  // NOT RECORDED: step failed: {bad['step']}: {info}"
         return (f"import {{ test, expect }} from '@playwright/test';\n\n"
-                f"test({_q(title)}, async ({{ page }}) => {{\n{body}\n}});\n")
+                f"{fn}({_q(title)}, async ({{ page }}) => {{\n{body}\n}});\n")
 
 
 class TestRunner:
@@ -122,7 +155,7 @@ class TestRunner:
         margin: how far (fused z-score units) the top match must lead the second to act without the LLM.
         strict: the LLM chooses every element (for re-running a failed case)."""
         self.llm, self.loc, self.margin, self.strict, self.wait = llm, locator or Locator(), margin, strict, wait
-        self.planner, self.usage, self.last_change = planner or llm, {}, ""
+        self.planner, self.usage, self.last_change, self.dialogs = planner or llm, {}, "", []
 
     # ---------- LLM ----------
     def ask(self, prompt, kind):
@@ -145,7 +178,18 @@ class TestRunner:
             raise ValueError(f"the LLM returned no plan: {text[:200]!r}")
         data, _ = json.JSONDecoder().raw_decode(text[start:])      # the first JSON object; ignore any text after it
         steps = [s for s in (data.get("steps", []) if isinstance(data, dict) else data) if isinstance(s, dict)]
+        split = []
+        for s in steps:     # a check of several quoted texts at once ('"$360" with "*includes tax"'): one per text
+            parts = re.findall(r"[\"“](.+?)[\"”]", str(s.get("value") or ""))
+            if (s.get("op") or "").startswith("verify_text") and len(parts) > 1:
+                split += [dict(s, value=x) for x in parts]
+            else:
+                split.append(s)
+        steps = split
         written = [m[1].strip() for m in re.finditer(r"^\s*\d+[.)]\s+(.+)$", case, re.M)]
+        for s in steps:     # a model that wrote the step as a call ("click(target=Cart link)"): make it words
+            if re.match(r"^\s*\w+\s*\(.*\)\s*$", str(s.get("step") or "")):
+                s["step"] = " ".join(str(x) for x in (s.get("op"), s.get("target"), s.get("value")) if x)
         for i, s in enumerate(steps):   # the step sentence is the test case's own when the counts agree
             if len(written) == len(steps):
                 s["step"] = written[i]
@@ -153,21 +197,32 @@ class TestRunner:
                 s["step"] = " ".join(str(x) for x in (s.get("op"), s.get("target"), s.get("value")) if x)
         for s in steps:     # values must come from the test case: repair copies the model garbled
             text = s.get("step", "")
+            src = text if text and text in case else case    # the model's own wording: check values against the case
+            if s.get("op") == "open" and not re.search(r"https?://", str(s.get("value") or "") + text):
+                s["op"], s["target"] = "click", s.get("target") or s.get("value") or text     # "open the cart"
             if (s.get("op") or "").startswith("verify") and not s.get("value") and s.get("op") != "verify_url":
                 quoted = re.search(r"[\"“](.+?)[\"”]", text)    # the model left the value out: take it from the step
-                s["value"] = quoted[1] if quoted else (_respan(s["target"], text) if s.get("target") else None)
+                s["value"] = quoted[1] if quoted else (_respan(s["target"], src) if s.get("target") else None)
             v = s.get("value")
             if s.get("op") == "verify_text" and ORDINAL.search(text):     # "the first product is X": position matters
                 s["op"], s["target"] = "verify_value", s.get("target") or text
-            url = re.search(r"https?://\S+", text)
+            url = re.search(r"https?://[^\s\"'|()<>]+", text) or re.search(r"https?://[^\s\"'|()<>]+", case)
             if s.get("op") == "open" and url:
                 s["value"] = url[0].rstrip(".,")
             elif isinstance(v, str) and v:
                 quoted = re.search(r"[\"“](.+?)[\"”]", text)
                 if quoted and v.lower() in quoted[1].lower():      # a cut-off copy of the quoted message
                     s["value"] = quoted[1]
-                elif v.lower() not in text.lower():
-                    s["value"] = quoted[1] if quoted else _respan(v, text)
+                elif v.lower() not in src.lower():
+                    s["value"] = quoted[1] if quoted else _respan(v, src)
+        verbs = {"click": "Click", "type": "Type in", "select": "Select in", "check": "Check", "uncheck": "Uncheck",
+                 "verify_value": "Check the value of"}
+        shared = {t for t in (s.get("step") for s in steps) if sum(x.get("step") == t for x in steps) > 1}
+        for s in steps:     # what to rank the page by: the step, or its own target when one sentence made several steps
+            q = s.get("step", "")
+            if q in shared and s.get("target"):
+                q = f"{verbs.get(s.get('op'), '')} {s['target']}".strip()
+            s["query"] = ANY.sub("the first", q)     # "add any phone" = the first one listed
         return steps
 
     # ---------- choosing an element ----------
@@ -212,19 +267,28 @@ class TestRunner:
 
     def pick(self, page, s, op, exclude=(), note=""):
         """The element for a step: the library's top match when confident, else the LLM's choice from the shortlist."""
-        hits = [h for h in self.loc.find(page, s["step"], max=8) if h["locator"] not in exclude]
+        hits = [h for h in self.loc.find(page, s.get("query") or s["step"], max=8) if h["locator"] not in exclude]
+        if op in FIT:   # typing needs a text box, check a checkbox …: only elements that can take the action
+            hits = [h for h in hits if h["role"] in FIT[op]]
         if not hits:
             return None, "none"
+        # a named thing to act on ("Claw Hammer"); for checks the name is the expected value, not the element
+        names = re.findall(r"\b[A-Z][\w-]*", s.get("target") or "") if op in ACTION else []
+        if names and not note and not any(all(n.lower() in h["doc"].lower() for n in names) for h in hits):
+            return None, "none"     # it is not on the page (yet): wait / open something first, don't guess
         if not self.strict and not note:
-            exact = self.exact_title(page, s["step"], hits[:5], s.get("target"))
+            exact = self.exact_title(page, s.get("query") or s["step"], hits[:5], s.get("target"))
             if exact is not None:
                 return exact, "library"
             sc = [h["score"] for h in hits]
             fits = op not in FIT or hits[0]["role"] in FIT[op]
+            if names and not all(n.lower() in hits[0]["doc"].lower() for n in names):
+                fits = False    # the top match is not the thing the step names ("Hammer" filter for "Claw Hammer")
             if fits and hits[0]["matches"] == 1 and (len(sc) == 1 or sc[0] - sc[1] >= self.margin):
                 return hits[0], "library"
         cands = "\n".join(f"{i}. {h['doc']}" for i, h in enumerate(hits, 1))
-        m = re.search(r"\d+", self.ask(CHOOSE.format(step=s["step"], cands=cands, note=note), "choose"))
+        m = re.search(r"\d+", self.ask(CHOOSE.format(step=s.get("query") or s["step"], cands=cands, note=note),
+                                       "choose"))
         k = int(m[0]) if m else 0
         return (hits[k - 1] if 0 < k <= len(hits) else None), "llm"
 
@@ -247,6 +311,15 @@ class TestRunner:
                 return False
             time.sleep(0.3)
 
+    @staticmethod
+    def _settle(page):
+        """Wait for the page's data, without hanging on sites that never stop loading (polling, ads, analytics)."""
+        for state, ms in (("load", 15000), ("networkidle", 5000)):
+            try:
+                page.wait_for_load_state(state, timeout=ms)
+            except Exception:  # noqa: S112 - still loading something forever: go on
+                continue
+
     def _marks(self, page):
         try:
             return page.evaluate(MARKS_JS)
@@ -257,14 +330,14 @@ class TestRunner:
         """Run one planned step; returns (ok, info, who chose the element)."""
         op, v = s.get("op"), s.get("value")
         if op == "open":
-            page.goto(v)
-            page.wait_for_load_state("networkidle")
+            page.goto(v, wait_until="domcontentloaded")
+            self._settle(page)
             lines.append(f"await page.goto({_q(v)});")
-            lines.append("await page.waitForLoadState('networkidle');")   # app data loaded before the first step
+            lines.append("await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});")
             return True, "opened", "-"
         if op in ("back", "press"):
-            page.go_back() if op == "back" else page.keyboard.press(v or "Enter")
-            page.wait_for_load_state("networkidle")
+            page.go_back(wait_until="domcontentloaded") if op == "back" else page.keyboard.press(v or "Enter")
+            self._settle(page)
             lines.append("await page.goBack();" if op == "back" else f"await page.keyboard.press({_q(v or 'Enter')});")
             if op == "back":
                 lines.append(f"await expect(page).toHaveTitle({_q(page.title())});")
@@ -274,6 +347,18 @@ class TestRunner:
         if op == "verify_text":
             ok = self._until(lambda: page.get_by_text(v).filter(visible=True).count() > 0)
             lines.append(f"await expect(page.getByText({_q(v)}).filter({{ visible: true }}).first()).toBeVisible();")
+            if not ok:      # text split across elements ("$360 <small>*includes tax</small>"): the page's own text
+                flat = lambda t: re.sub(r"\s+", " ", t).strip().lower()     # noqa: E731
+                try:
+                    ok = flat(v) in flat(page.locator("body").inner_text())
+                except Exception:
+                    ok = False
+                if ok:
+                    lines[-1] = f"await expect(page.locator('body')).toContainText({_q(v)});"
+                    return True, "visible (across elements)", "-"
+            if not ok and any(v.lower() in m.lower() for m in self.dialogs):   # a browser popup said it
+                lines[-1] = f"await expect.poll(() => dialogs.join(' | ')).toContain({_q(v)});"
+                return True, "shown in a browser popup", "-"
             if not ok and v.lower() in self.last_change.lower():   # a toast that already faded: the action showed it
                 return True, "appeared after the previous action (transient message)", "-"
             return ok, "visible" if ok else f"text not visible: {v}", "-"
@@ -290,17 +375,29 @@ class TestRunner:
         action = ACTION.get(op)
         if not action:
             return False, f"unknown step type {op!r}", "-"
+        if op == "select" and not self._has_fit(page, s, op):    # "select 12 as month" in a plain text field
+            op, action = "type", "fill"
         hit, who = self.pick(page, s, op)
-        if not hit:     # the page may still be rendering (after back / navigation): look once more
+        for _ in range(3):      # the page may still be rendering (after back / navigation): look again
+            if hit:
+                break
             page.wait_for_timeout(1500)
+            hit, who = self.pick(page, s, op)
+        for _ in range(2):      # still nothing: the element is behind a dialog, menu or another page; open it first
+            if hit:
+                break
+            if not self._reach(page, s, lines):
+                break
             hit, who = self.pick(page, s, op)
         tried = []
         while hit:
             js, lv = self.code_loc(page, hit, s["step"])
             m0 = self._marks(page)
-            res = act(page, lv, action, v)
+            res = act(page, lv, action, v, dialog="accept")      # alerts / confirms are accepted, like a user would
             self.last_change = res
-            if action != "click" or "No change detected" not in res or tried:
+            self.dialogs += [m[2] for m in re.finditer(r"A browser dialog appeared: (['\"])(.*?)\1 \(it was", res)]
+            changed = "No change detected" not in res or "dialog appeared" in res or "new tab opened" in res
+            if action != "click" or changed or tried:
                 lines.append(f"await {js}{CODE[action].format(v=_q(v))};")
                 self._sync(page, res, m0, lines)
                 return True, res[:300], who
@@ -309,8 +406,36 @@ class TestRunner:
                                  note=f"Clicking {hit['doc']} changed nothing on the page.\n")
         return False, "no matching element", who
 
+    def _has_fit(self, page, s, op):
+        return any(h["role"] in FIT[op] for h in self.loc.find(page, s.get("query") or s["step"], max=8))
+
+    def _reach(self, page, s, lines):
+        """Written test cases skip obvious steps ("Login with user X" never says "open the login dialog"). Ask the LLM
+        which one element to click to get to the step's element, click it and record it. True if something opened."""
+        hits = self.loc.find(page, s.get("query") or s["step"], max=10)
+        if not hits:
+            return False
+        cands = "\n".join(f"{i}. {h['doc']}" for i, h in enumerate(hits, 1))
+        txt = self.ask(REACH.format(step=s["step"], cands=cands), "choose")
+        m = re.search(r"\d+", txt)
+        k = int(m[0]) if m else 0
+        if not 0 < k <= len(hits):
+            return False
+        js, lv = self.code_loc(page, hits[k - 1], s["step"])
+        m0 = self._marks(page)
+        res = act(page, lv, "click", dialog="accept")
+        if "No change detected" in res and "dialog appeared" not in res:
+            return False
+        self.last_change = res
+        self.dialogs += [m[2] for m in re.finditer(r"A browser dialog appeared: (['\"])(.*?)\1 \(it was", res)]
+        lines.append(f"await {js}.click();")
+        self._sync(page, res, m0, lines)
+        return True
+
     def _sync(self, page, res, m0, lines):
         """Make the script wait for what the action changed, so it never races ahead of the app."""
+        if "dialog appeared" in res:    # e.g. "Product added" after the server answered: wait for that popup
+            lines.append(f"await expect.poll(() => dialogs.length).toBeGreaterThanOrEqual({len(self.dialogs)});")
         if res.startswith("Navigated"):
             t = page.title()
             if t and not VOLATILE.search(t):
@@ -325,6 +450,9 @@ class TestRunner:
 
     def _verify_value(self, page, s, v, lines):
         hit, who = self.pick(page, s, "verify")
+        if not hit:     # values that load late (a cart total filled in by a request): look once more
+            page.wait_for_timeout(2000)
+            hit, who = self.pick(page, s, "verify")
         for attempt in range(2):
             if not hit:
                 return False, "element not found", who
@@ -355,7 +483,7 @@ class TestRunner:
 
     def run(self, page, case, steps=None):
         """Run a manual test case (plain text) on a sync Playwright page. steps: an existing plan to reuse."""
-        self.usage, self.last_change = {}, ""
+        self.usage, self.last_change, self.dialogs = {}, "", []
         steps = steps or self.plan(case)
         lines, log = [], []
         for s in steps:
@@ -366,4 +494,4 @@ class TestRunner:
             log.append(dict(step=s.get("step"), op=s.get("op"), ok=ok, info=info, chosen_by=who))
             if not ok and not (s.get("op") or "").startswith("verify"):
                 break   # an action failed: later steps would run on the wrong page
-        return Result(steps, log, lines, self.usage)
+        return Result(steps, log, lines, self.usage, list(self.dialogs))

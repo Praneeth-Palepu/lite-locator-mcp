@@ -119,6 +119,7 @@ def main():
             add(mine, res2.usage, "heal")
             healed, res = True, (res2 if res2.passed or len(res2.log) > len(res.log) else res)
         (out / f"{cid}.spec.js").write_text(res.spec(f"{cid} {title}"))
+        (out / f"{cid}.log.json").write_text(json.dumps(dict(plan=res.steps, log=res.log), indent=1))  # what happened
         rows[cid] = dict(title=title, passed=res.passed, healed=healed, usage=mine,
                          chosen_by_library=sum(x["chosen_by"] == "library" for x in res.log),
                          chosen_by_llm=sum(x["chosen_by"] == "llm" for x in res.log),
@@ -137,10 +138,14 @@ def main():
                 res = run_case(llm, case, strict=True, headed=a.headed)
                 add(total, res.usage, "heal")
                 add(rows[cid]["usage"], res.usage, "heal")
-                (out / f"{cid}.spec.js").write_text(res.spec(f"{cid} {title}"))
-                passed, rows[cid]["healed"] = run_scripts(out, [cid]).get(cid, False), True
+                rows[cid]["healed"] = True
+                if res.passed:          # keep the first script unless the re-run recorded a complete one
+                    (out / f"{cid}.spec.js").write_text(res.spec(f"{cid} {title}"))
+                    passed = run_scripts(out, [cid]).get(cid, False)
+            if not rows[cid]["passed"]:
+                passed = False      # recorded only up to the failing step (marked fixme): not a passing script
             rows[cid]["script"] = passed
-            print(f"script {cid}: {'passed' if passed else 'FAILED'}")
+            print(f"script {cid}: {'passed' if passed else 'FAILED' if rows[cid]['passed'] else 'incomplete (case failed)'}")
 
     print("\nLLM usage")
     for stage, t in total.items():
