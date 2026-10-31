@@ -103,7 +103,7 @@ Possible results after an action: `Navigated to a new page …` (with a short pa
 `No change detected within 3 s …` (after waiting for slow responses; the LLM is told not to repeat irreversible
 actions), plus `A new tab opened: …` / `A browser dialog appeared: …` when that happens.
 
-## 5. Cheaper still: plan once, let the library execute (`TestRunner`, 0.1.6)
+## 5. Cheaper still: plan once, let the library execute (`TestRunner`)
 
 An agent re-sends the whole conversation (tool definitions, test case, every earlier step) on every LLM call, so the
 cost grows with every step. For executing manual test cases you don't need an agent loop:

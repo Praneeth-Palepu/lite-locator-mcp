@@ -4,4 +4,4 @@ from elem_rank.diff import Snap, outcome
 from elem_rank.locate import Hits, Locator, aact, act, aobserve, locator, observe
 
 __all__ = ["Locator", "Hits", "locator", "act", "aact", "observe", "aobserve", "outcome", "Snap"]
-__version__ = "0.1.7.post1"
+__version__ = "0.1.8"

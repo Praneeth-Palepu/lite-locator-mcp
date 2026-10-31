@@ -2,6 +2,13 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.8 (2026-10-31)
+**What:** documentation only. The README opens with what the library does and what it was measured to do (test cases
+in any format, ≈ 1,000 tokens per test case, stable generated tests, results on two test suites), without
+comparisons between versions; the version history stays in this file.
+**Why:** owner: the package page should show the current capabilities, not version-to-version comparisons.
+**Checked:** see `ci/reports/0.1.8.md` (full release checks; no code changes).
+
 ## 0.1.7.post1 (2026-10-31)
 **What:** documentation only. The README's "Wins" section shows the 0.1.7 results (test cases as teams really write
 them) next to the 0.1.6 cost results, with the ranges measured across all full runs instead of the best run.

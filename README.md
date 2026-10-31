@@ -4,51 +4,31 @@ Fewer LLM tokens and sturdier generated tests for Playwright test automation. Sm
 package) find the page elements for each test step, so the LLM no longer reads whole pages or re-reads a growing
 conversation.
 
-## Wins (measured, latest release)
+## What it does
 
-**1. Cost and stability** (since 0.1.6). One user story on
-[practicesoftwaretesting.com](https://practicesoftwaretesting.com) (a site built for test practice), 34 manual test
-cases (search, filters, sorting, product page, quantity, cart), local Qwen3 4B model:
+- **Runs manual test cases and writes the Playwright tests.** Give it test cases as your team writes them ("Steps |
+  Expected Result" rows with preconditions, Gherkin, one-line prose, jargon such as PLP / PDP / ATC). One LLM call
+  plans each case; the library finds and acts on the elements itself and asks the LLM a short question only when it
+  is unsure. Preconditions become setup steps, a sentence with several actions becomes single steps, dialogs and menus
+  the case doesn't mention are opened first, browser popups are checked, and "any item" means the first one listed.
+- **About 1,000 LLM tokens per test case** (≈ $0.004 at GPT-5.4 prices, ≈ $0.15 for a 34-case user story), where an
+  LLM agent loop used about 75,000 on the same cases, because the agent re-sends the whole conversation and page on
+  every step.
+- **Generated tests that keep passing.** No database IDs or positional CSS in the scripts: elements are located by
+  label, card heading, table row or text, only when that matches exactly one element. Scripts wait for what the app
+  changed (new page title, a badge going from 1 to 2, a popup) and pass with parallel workers. A test case that fails
+  never produces a passing script: it is written as `test.fixme` with the failing step.
+- **Works with small local models.** Measured with a 4B model on a laptop CPU/GPU:
 
-| | Agent: LangGraph + Playwright MCP + lite-locator 0.1.5 | **TestRunner** |
+| Test suite | Passed | Generated scripts passing `npx playwright test` |
 |---|---|---|
-| Test cases passed | 30 / 34 after healing | **34 / 34** (33–34 across runs) |
-| Generated scripts that pass `npx playwright test` | broke after the site's next data reset | **all passing cases**, also with 4 parallel workers |
-| LLM calls (run + healing) | 658 | **46–84** across 6 full runs |
-| LLM tokens (input + output) | 2,528,293 + 24,081 | **≈ 27,000–39,000 in total** |
-| Cost at GPT-5.4 prices ($2.50 / $15 per 1M tokens) | ≈ $6.68 per user story | **≈ $0.13–0.17 per user story** (≈ $0.004 per test case) |
+| 34 written test cases for one user story (practicesoftwaretesting.com: search, filters, sorting, product page, quantity, cart) | 33–34 / 34 across runs | all passing cases |
+| 16 messy test cases on another site (demoblaze.com: step/expected rows, prose, Gherkin, jargon; one has no test data on purpose) | 13 / 16 (13 of the 15 that can pass) | all passing cases but one |
 
-A plain Playwright MCP agent without lite-locator, same model, failed its first 3 cases at 15,000 tokens per case: a
-small model cannot work from 3,000–4,000-token page snapshots.
-
-**2. Test cases as teams really write them** (0.1.7). 16 cases on another site (demoblaze.com) written as
-"Steps | Expected Result" rows with preconditions, one-line prose ("add any phone to the cart and check it shows up"),
-Gherkin, and jargon (PLP → PDP, ATC); one has no test data on purpose:
-
-| | 0.1.6 | **0.1.7** |
-|---|---|---|
-| Test cases passed, local 4B model | 0 / 16 | **13 / 16** (13 of the 15 that can pass) |
-| … with a stronger model for the one planning call per case (one run, before the last fixes) | n/a | **12 / 16** |
-| LLM tokens for all 16 cases | n/a | **≈ 27,000** (≈ $0.12 at GPT-5.4 prices) |
-
-0.1.7 turns preconditions into setup steps, splits a sentence into single actions, opens dialogs and menus the case
-doesn't mention, checks browser popups, takes "any item" as the first one listed, and never writes a passing script
-for a failed case. Run-to-run variation with a small model is about ±1–2 cases.
-
-Where the wins come from:
-
-1. **Plan once, the library executes** (`TestRunner`): one LLM call turns a manual test case into steps; the library
-   finds and acts on each element itself and asks the LLM only when it is unsure (a ~300-token question with a short
-   list). An agent instead re-sends the whole conversation for every step.
-2. **Stable locators in generated code**: no database IDs (`[data-test="product-01M66W2R…"]`) and no positional CSS
-   paths. Elements are located by label, card heading, table row or text, and only when that matches exactly one
-   element. Applies to `find()`, `TestRunner` and the LangGraph wrapper.
-3. **Scripts wait for what changed**: after a click the script asserts the new page title, or the badge that went from
-   1 to 2, so it never races ahead of the app.
-4. **Icon-only buttons are found** (✕ delete, 🗑, +): described by their icon and table row
-   (`icon=xmark (remove / delete / close) | row: Claw Hammer`).
-5. **Shortlist instead of the whole page** and **what changed instead of a new snapshot** for LLM agents (since 0.1.3):
-   a few candidates at 40–150 tokens instead of 2,000–12,000 for the page.
+- **Finds elements for LLM agents too.** For an existing LangGraph / Playwright MCP agent: a short list of candidate
+  elements (40–150 tokens) instead of the whole page (2,000–12,000), what changed after an action instead of a new
+  snapshot, and stable locators in the code Playwright MCP records. Icon-only buttons (✕, 🗑, +) are found by icon
+  and table row.
 
 Runs on CPU, no GPU and no PyTorch; the int8 ONNX models are inside the package and nothing is downloaded at runtime.
 
@@ -117,13 +97,8 @@ await page.getByRole('row').filter({ hasText: "Claw Hammer" }).locator("a.btn.bt
 await expect(page.getByText("Claw Hammer").filter({ visible: true })).toHaveCount(0);
 ```
 
-Real test cases are messier than the one above. Tested with 16 cases on another site written as "Steps | Expected
-Result" rows with preconditions, one-line prose ("add any phone to the cart and check it shows up"), Gherkin and jargon
-(PLP → PDP, ATC): 0.1.7 passes 13/16 (13 of the 15 that can pass) with a local 4B model and 12/16 with a stronger model for the planning call
-(one case has no test data on purpose). What it handles: preconditions become setup steps, one sentence becomes
-several single actions, dialogs and menus the case doesn't mention are opened first, browser popups are checked, and
-"any item" means the first one listed. What it can't do: invent data the case doesn't give ("log in with valid
-credentials"), so put the data in the test case.
+The test case can be in any format your team uses (step / expected rows, Gherkin, prose). What it can't do: invent
+data the case doesn't give ("log in with valid credentials"), so put the data in the test case.
 
 Quality guards: the library acts alone only when its top match is clearly ahead, fits the action (type → a text box)
 and is unique, or when the element's own title is exactly what the step names ("Claw Hammer", not "Claw Hammer with

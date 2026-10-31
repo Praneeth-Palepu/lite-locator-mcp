@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lite-locator-mcp"
-version = "0.1.7.post1"
+version = "0.1.8"
 description = "Playwright MCP with a semantic element finder in front: the LLM gets a shortlist of candidates instead of the whole accessibility tree."
 readme = "README.md"
 license = "MIT"

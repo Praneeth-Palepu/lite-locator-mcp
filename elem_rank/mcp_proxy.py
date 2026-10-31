@@ -195,7 +195,7 @@ async def main():
             out.append("If no candidate fits the step, call browser_snapshot for the full page.")
             return types.CallToolResult(content=[types.TextContent(type="text", text="\n".join(out))])
 
-        server = Server("lite-locator-mcp", version="0.1.7", on_list_tools=list_tools, on_call_tool=call_tool,
+        server = Server("lite-locator-mcp", version="0.1.8", on_list_tools=list_tools, on_call_tool=call_tool,
                         instructions="Use browser_find_element to locate elements for a step; browser_snapshot "
                                      "when no candidate fits or a check needs the whole page. Actions return what "
                                      "changed; if no change was detected, do not repeat a submit, payment or delete.")
