@@ -4,23 +4,36 @@ Fewer LLM tokens and sturdier generated tests for Playwright test automation. Sm
 package) find the page elements for each test step, so the LLM no longer reads whole pages or re-reads a growing
 conversation.
 
-## Wins (0.1.6, measured)
+## Wins (measured, latest release)
 
-One user story on [practicesoftwaretesting.com](https://practicesoftwaretesting.com) (a site built for test
-practice), 34 manual test cases (search, filters, sorting, product page, quantity, cart), local Qwen3 4B model:
+**1. Cost and stability** (since 0.1.6). One user story on
+[practicesoftwaretesting.com](https://practicesoftwaretesting.com) (a site built for test practice), 34 manual test
+cases (search, filters, sorting, product page, quantity, cart), local Qwen3 4B model:
 
-| | Agent: LangGraph + Playwright MCP + lite-locator 0.1.5 | **TestRunner (0.1.6)** |
+| | Agent: LangGraph + Playwright MCP + lite-locator 0.1.5 | **TestRunner** |
 |---|---|---|
-| Test cases passed | 30 / 34 after healing | **34 / 34** |
-| Generated scripts that pass `npx playwright test` | broke after the site's next data reset | **34 / 34**, also with 4 parallel workers |
-| LLM calls (run + healing) | 658 | **68** |
-| LLM tokens (input + output) | 2,528,293 + 24,081 | **22,413 + 5,083** |
-| Cost at GPT-5.4 prices ($2.50 / $15 per 1M tokens) | ≈ $6.68 per user story | **≈ $0.13 per user story** (≈ $0.004 per test case) |
+| Test cases passed | 30 / 34 after healing | **34 / 34** (33–34 across runs) |
+| Generated scripts that pass `npx playwright test` | broke after the site's next data reset | **all passing cases**, also with 4 parallel workers |
+| LLM calls (run + healing) | 658 | **46–84** across 6 full runs |
+| LLM tokens (input + output) | 2,528,293 + 24,081 | **≈ 27,000–39,000 in total** |
+| Cost at GPT-5.4 prices ($2.50 / $15 per 1M tokens) | ≈ $6.68 per user story | **≈ $0.13–0.17 per user story** (≈ $0.004 per test case) |
 
-TestRunner column: one full run; a second full run gave 33 / 34 (the model left an expected value out of one plan;
-such values are now taken from the test case text) with 84 calls and 27,055 + 5,724 tokens (≈ $0.15). A plain
-Playwright MCP agent without lite-locator, same model, failed its first 3 cases at 15,000 tokens per case and one
-reply ran away for 40 minutes: a small model cannot work from 3,000–4,000-token page snapshots.
+A plain Playwright MCP agent without lite-locator, same model, failed its first 3 cases at 15,000 tokens per case: a
+small model cannot work from 3,000–4,000-token page snapshots.
+
+**2. Test cases as teams really write them** (0.1.7). 16 cases on another site (demoblaze.com) written as
+"Steps | Expected Result" rows with preconditions, one-line prose ("add any phone to the cart and check it shows up"),
+Gherkin, and jargon (PLP → PDP, ATC); one has no test data on purpose:
+
+| | 0.1.6 | **0.1.7** |
+|---|---|---|
+| Test cases passed, local 4B model | 0 / 16 | **13 / 16** (13 of the 15 that can pass) |
+| … with a stronger model for the one planning call per case (one run, before the last fixes) | n/a | **12 / 16** |
+| LLM tokens for all 16 cases | n/a | **≈ 27,000** (≈ $0.12 at GPT-5.4 prices) |
+
+0.1.7 turns preconditions into setup steps, splits a sentence into single actions, opens dialogs and menus the case
+doesn't mention, checks browser popups, takes "any item" as the first one listed, and never writes a passing script
+for a failed case. Run-to-run variation with a small model is about ±1–2 cases.
 
 Where the wins come from:
 

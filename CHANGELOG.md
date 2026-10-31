@@ -2,6 +2,12 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.7.post1 (2026-10-31)
+**What:** documentation only. The README's "Wins" section shows the 0.1.7 results (test cases as teams really write
+them) next to the 0.1.6 cost results, with the ranges measured across all full runs instead of the best run.
+**Why:** owner: the PyPI page still showed only the 0.1.6 wins after 0.1.7.
+**Checked:** see `ci/reports/0.1.7.post1.md` (full release checks; no code changes).
+
 ## 0.1.7 (2026-10-31)
 **Wins (measured):** test cases written the way teams really write them: 16 cases on demoblaze.com in four styles
 ("Steps | Expected Result" rows with preconditions, one-line prose, Gherkin, jargon such as PLP/PDP/ATC), one of them
