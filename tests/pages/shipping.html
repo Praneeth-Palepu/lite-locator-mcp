@@ -1,0 +1,24 @@
+<!doctype html><html><head><title>Shipping</title></head><body>
+<main>
+<h1>Shipping details</h1>
+<div id="done"></div>
+<form id="f" aria-label="Shipping">
+  <input aria-label="First Name" id="first"> <input aria-label="Last Name" id="last">
+  <input aria-label="Postal Code" id="zip">
+  <div id="err"></div>
+  <button type="button" id="cancel" onclick="location.href='shipping.html?cancelled=1'">Cancel</button>
+  <button type="submit">Continue</button>
+</form>
+</main>
+<script>
+if (location.search.includes('ok=1')) document.getElementById('done').innerHTML = '<h2>Review your order</h2>';
+document.getElementById('f').onsubmit = (e) => {
+  e.preventDefault();
+  for (const [id, name] of [['first', 'First Name'], ['last', 'Last Name'], ['zip', 'Postal Code']])
+    if (!document.getElementById(id).value) {
+      document.getElementById('err').innerHTML = '<h3 role="alert">Error: ' + name + ' is required</h3>';
+      return;
+    }
+  location.href = 'shipping.html?ok=1';
+};
+</script></body></html>

@@ -25,6 +25,10 @@ conversation.
 | 34 written test cases for one user story (practicesoftwaretesting.com: search, filters, sorting, product page, quantity, cart) | 33–34 / 34 across runs | all passing cases |
 | 16 messy test cases on another site (demoblaze.com: step/expected rows, prose, Gherkin, jargon; one has no test data on purpose) | 13 / 16 (13 of the 15 that can pass) | all passing cases but one |
 
+- **Writes test cases from an exploration with fewer tokens and every negative path.** While an agent explores, the
+  library records pages, fields, actions and the exact messages they caused (no LLM calls), then tries each required
+  field left empty by itself. The writer reads that record (~1,600 tokens) instead of the whole conversation, and the
+  cases for each observed message are written by the library. See [section 5](#5-writing-test-cases-from-an-exploration-lite_locatorevidence).
 - **Finds elements for LLM agents too.** For an existing LangGraph / Playwright MCP agent: a short list of candidate
   elements (40–150 tokens) instead of the whole page (2,000–12,000), what changed after an action instead of a new
   snapshot, and stable locators in the code Playwright MCP records. Icon-only buttons (✕, 🗑, +) are found by icon
@@ -177,6 +181,49 @@ All Playwright MCP tools stay available; `browser_find_element(step)` is added a
 Arguments after `--` go to Playwright MCP. Options: `--lam 0.005|0.01|0.02` (more / default / fewer candidates),
 `--full-snapshots` (actions return Playwright's own full snapshot), `--lean` (start Playwright MCP with
 `--snapshot-mode none`). `PLAYWRIGHT_MCP` overrides the child command (default `npx -y @playwright/mcp@0.0.83`).
+
+## 5. Writing test cases from an exploration (`lite_locator.evidence`)
+
+```python
+from lite_locator.evidence import Recorder, probe, writer_prompt, parse_cases, merge_cases, check, render
+
+rec = Recorder()
+tools = with_lite_locator(await load_mcp_tools(session), lean=True, recorder=rec)   # records as the agent explores
+await agent.ainvoke(...)                          # your exploration prompt, as before
+await probe(tools, rec)                           # no LLM: each required field left empty, exact message recorded
+observed = rec.observed_cases()                   # cases the library writes from what it saw (exact messages)
+reply = llm.invoke(writer_prompt(criteria, rec, observed))   # criteria + a compact record, not the conversation
+cases = merge_cases(observed, parse_cases(reply.content))
+print(check(cases, criteria, rec))                # criteria no case covers; expected texts never seen on the site
+print(render(cases, "markdown"))                  # or "csv", "json"
+```
+
+- `Recorder` keeps, with no LLM calls: per page its fields, buttons, amounts and messages; every action with what it
+  caused (went to a page, showed a message, the browser blocked the submit, nothing changed) and which fields were
+  empty when a form was submitted. `rec.pack()` is that record as text.
+- `probe` re-opens each form the explorer submitted successfully and submits it once per field with that field empty
+  (the other fields get the values that went through), so every "is required" message is in the record even when the
+  agent never tried it. Buttons that only leave a form (Cancel, Back, ...) are never treated as its submit button.
+  A form that can only be reached by clicking through (not by its URL) is reported as skipped; `rec.gaps()` lists
+  the untried paths as instructions you can send back to the agent instead.
+- `observed_cases()` gives one case per observed message (path to it, fields left empty, the exact text), written by
+  the library. The writer tags them with criteria and writes only the rest; texts it did not see are marked
+  "(not observed)" rather than guessed.
+
+Measured on SauceDemo checkout (7 acceptance criteria, 6 runs, Gemini 3.1 Flash-Lite exploring, Gemini 3 Flash
+writing), against a writer that continues the explorer's conversation:
+
+| Per run (average) | Writer re-reads the conversation | `lite_locator.evidence` |
+|---|---|---|
+| Writer input tokens | 6,300 | 1,600 |
+| Writer cost | ₹0.80 | ₹0.64 |
+| Negative test cases | 3.3 (the three missing-field checks in one case) | 6.3 (one per field, exact message) |
+| Criteria covered | 7 / 7 | 7 / 7 |
+
+With Qwen3 4B the conversation-reading writer also wrote messages the site never showed (1–8 per run, e.g. a wrong
+locked-out text); with the record it wrote none. The exploration itself costs the same either way (it is most of the
+total here); the saving grows with the size of the conversation the writer would otherwise re-read. Full example:
+[`examples/write_test_cases.py`](examples/write_test_cases.py).
 
 ## How "what changed" behaves
 

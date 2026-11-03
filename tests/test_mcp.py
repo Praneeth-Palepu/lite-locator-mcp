@@ -155,3 +155,49 @@ def test_langchain_keeps_negative_path_messages(site, loc):
             await _negative_paths(find, click)
 
     asyncio.run(run())
+
+
+def test_probe_finds_the_messages_of_untried_negative_paths(site, loc):
+    """The explorer filled the form and went on; probe() leaves each field empty in turn, with no LLM, and records
+    the exact message of each one. Cancel never counts as the form's submit button."""
+    pytest.importorskip("langchain_mcp_adapters")
+    from langchain_mcp_adapters.tools import load_mcp_tools
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    from lite_locator.evidence import Recorder, probe
+    from lite_locator.langchain import with_lite_locator
+
+    async def run():
+        params = StdioServerParameters(command="npx", args=["-y", PW_MCP, "--headless", "--isolated"])
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            rec = Recorder()
+            tools = with_lite_locator(await load_mcp_tools(s), locator=loc, recorder=rec)
+            by = {t.name: t for t in tools}
+            key = "target" if "target" in str(by["browser_click"].args_schema) else "ref"
+            await by["browser_navigate"].ainvoke({"url": site + "/shipping.html"})
+            await by["browser_snapshot"].ainvoke({})
+            refs = rec._refs()
+            for name, value in [("First Name", "Ann"), ("Last Name", "Lee"), ("Postal Code", "12345")]:
+                await by["browser_type"].ainvoke({key: refs[name], "element": name, "text": value})
+            await by["browser_click"].ainvoke({key: refs['button "Cancel"'], "element": "Cancel"})
+            await by["browser_navigate"].ainvoke({"url": site + "/shipping.html"})
+            await by["browser_snapshot"].ainvoke({})
+            refs = rec._refs()
+            for name, value in [("First Name", "Ann"), ("Last Name", "Lee"), ("Postal Code", "12345")]:
+                await by["browser_type"].ainvoke({key: refs[name], "element": name, "text": value})
+            await by["browser_click"].ainvoke({key: refs['button "Continue"'], "element": "Continue"})
+            assert [f["button"] for f in rec.forms()] == ['button "Continue"']
+            assert len(rec.gaps()) == 1
+            log = await probe(tools, rec)
+            assert log == [f"/shipping.html {n} empty: Error: {n} is required"
+                           for n in ("First Name", "Last Name", "Postal Code")], log
+            assert rec.gaps() == []
+            texts = [c["expected"] for c in rec.observed_cases()]
+            for n in ("First Name", "Last Name", "Postal Code"):
+                assert [f'"Error: {n} is required" is shown'] in texts
+            case = next(c for c in rec.observed_cases() if "Last Name" in c["expected"][0])
+            assert any("Leave Last Name empty" == st for st in case["steps"]), case
+
+    asyncio.run(run())

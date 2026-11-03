@@ -159,3 +159,13 @@ def test_trim_keeps_the_messages_of_removed_snapshots():
             ToolMessage(snap('- button "Send"\n'), tool_call_id="2")]
     out = trim_snapshots(msgs)
     assert "snapshot removed" in out[0].content and "Email is required" in out[0].content
+
+
+def test_recorder_keeps_the_evidence_of_actions(loc):
+    from lite_locator.evidence import Recorder
+    rec = Recorder()
+    by = {t.name: t for t in with_lite_locator(fake_tools({"page": PAGE1}), locator=loc, recorder=rec)}
+    asyncio.run(by["browser_click"].ainvoke({"ref": "e2"}))
+    s = rec.steps[-1]
+    assert s["target"] == 'button "Login"' and s["messages"] == ["Wrong password"] and s["empty"] == ["Username"]
+    assert 'Click button "Login"  → empty: Username; shows "Wrong password"' in rec.pack()

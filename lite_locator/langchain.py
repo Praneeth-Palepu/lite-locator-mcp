@@ -84,7 +84,7 @@ def _state(text):
 
 
 def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element", diffs=True, keep=None,
-                      stable_code=True, lean=False):
+                      stable_code=True, lean=False, recorder=None):
     """Your Playwright MCP tools plus browser_find_element, which ranks the page's own snapshot (taken with your
     existing browser_snapshot tool) and returns only the best few elements with their refs.
     diffs: action tools return what changed instead of a full snapshot (False = unchanged tools).
@@ -95,7 +95,10 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
     positional CSS paths ([data-test="product-01M66..."]) with a label / card heading / table row / text locator that
     matches exactly one element, so the generated test survives new data. Needs browser_evaluate.
     lean: drop tool options a test agent doesn't need (doubleClick, modifiers, slowly …): fewer tokens per call,
-    and typing replaces a field's value instead of appending to it."""
+    and typing replaces a field's value instead of appending to it.
+    recorder: a lite_locator.evidence.Recorder that keeps the facts of the exploration (pages, fields, actions and the
+    exact messages they caused) for a test-case writer, which then reads rec.pack() instead of the whole conversation.
+    Needs diffs=True (the default)."""
     from langchain_core.tools import StructuredTool
     snap = next((t for t in tools if t.name.endswith("browser_snapshot")), None)
     if snap is None:
@@ -107,6 +110,15 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
         st = _state(text)
         if st:
             seen["last"] = st
+            if recorder is not None:
+                recorder.see(st)
+
+    def record(t, kw, pre, out):
+        if recorder is not None:
+            try:
+                recorder.action(t.name, kw, pre, seen["last"], out)
+            except Exception:  # evidence is a by-product: never break the agent's action
+                pass
 
     def run(text, step, max, details=None):
         if "[ref=" not in text:  # no page open or an error message: pass it through
@@ -264,7 +276,9 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 pre = await again_a()
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(await t.ainvoke(kw)), opts)
-                return await afinish(out, pre or seen["last"], quiet, t0, again_a, checker(t, True))
+                out = await afinish(out, pre or seen["last"], quiet, t0, again_a, checker(t, True))
+                record(t, kw, pre, out)
+                return out
 
             def again_s():
                 return _state(_text(snap.invoke({})))
@@ -275,7 +289,9 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 pre = again_s()
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(t.invoke(kw)), opts)
-                return finish(out, pre or seen["last"], quiet, t0, again_s, checker(t, False))
+                out = finish(out, pre or seen["last"], quiet, t0, again_s, checker(t, False))
+                record(t, kw, pre, out)
+                return out
         else:
             return t
         desc = t.description + ("" if t.name.endswith("browser_snapshot") else

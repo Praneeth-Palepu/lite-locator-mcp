@@ -2,6 +2,26 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.2.0 (2026-11-03)
+**What:** `lite_locator.evidence`: writing test cases from an exploration, with fewer tokens and every negative path.
+- `Recorder` (pass `recorder=` to `with_lite_locator`): pages, fields, actions and the exact messages they caused,
+  kept as the agent explores, with no LLM calls. `pack()` writes it out in a few hundred tokens.
+- `probe(tools, recorder)`: for each form the explorer submitted, submits it once per field with that field empty
+  and records the message, with no LLM calls. Cancel / Back style buttons never count as a form's submit; CSS-selector
+  clicks (newer Playwright MCP) and Enter-key submits are handled. `gaps()` lists what is still untried.
+- `observed_cases()`: test cases written by the library from what was observed, exact messages included.
+- `writer_prompt`, `parse_cases` (keeps the complete cases of a cut-off reply, takes content blocks), `merge_cases`
+  (the writer tags observed cases with criteria), `check` (uncovered criteria, quoted texts never seen; visited URLs
+  and typed values count as seen), `render` (markdown / CSV / JSON).
+Opt-in: nothing changes unless `recorder=` is passed.
+**Why:** owner: the library optimised exploration tokens but not the test-case writing, and some negative tests were
+missing. A writer that continues the exploration conversation re-reads all of it, bundled the three missing-field
+checks into one case, and (with a 4B model) wrote error messages the site never showed.
+**Checked:** unit tests for the recorder, pack, observed cases, gaps, check, parsing and merging; a real-browser test
+of `probe` on a local form (Playwright MCP 0.0.83 and 0.0.29); SauceDemo, 7 criteria: 3 runs with Qwen3 4B and 6 runs
+with Gemini (3.1 Flash-Lite exploring, 3 Flash writing, ₹38.8 total): writer input 6.3k → 1.6k tokens, negative cases
+3.3 → 6.3, 7/7 criteria covered, no invented texts; full release checks in `ci/reports/0.2.0.md`.
+
 ## 0.1.9 (2026-11-03)
 **What:** the page's feedback (error, validation and confirmation messages) always reaches the LLM, so negative test
 cases can be written from it. Six places where it could be lost are fixed:
