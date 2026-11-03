@@ -54,3 +54,9 @@ def test_score_normalisation_handles_small_and_large_pages():
     assert small.argmax() == 0 and np.isfinite(small).all()
     big = _zin(np.array([2.0, 1.0, -1000.5, -1000.0]))  # two outside the reranked top-k
     assert list(np.argsort(-big)) == [0, 1, 3, 2] and big[3] < big[1]
+
+
+def test_frame_style_refs_are_cleaned_too():
+    from elem_rank.steps import clean_ref
+    assert clean_ref('textbox "Username" [ref=f1e11]  (in: form:Login)') == "f1e11"
+    assert clean_ref('button "Login" [ref=e12]') == "e12"

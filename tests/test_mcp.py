@@ -94,3 +94,64 @@ def test_proxy_describes_icon_only_buttons(site):
             assert "add to cart" in first.lower(), f
 
     asyncio.run(run())
+
+
+async def _negative_paths(find, click):
+    """Shared by the proxy and the wrapper: a submit blocked by built-in validation and an error on the next page."""
+    f = await find("click the Subscribe button")
+    out = await click(re.search(r'button "Subscribe" \[ref=(e\d+)\]', f).group(1), "Subscribe")
+    # Playwright MCP 0.0.29 has no browser_evaluate: the exact message can't be read, a hint says what may have happened
+    assert ("built-in form validation" in out and '"Email"' in out) or "built-in validation may have blocked" in out, out
+    f = await find("click the Sign in button")
+    out = await click(re.search(r'button "Sign in" \[ref=(e\d+)\]', f).group(1), "Sign in")
+    assert "Navigated" in out and "Invalid username or password" in out, out
+
+
+@needs_proxy
+def test_proxy_keeps_negative_path_messages(site):
+    pytest.importorskip("mcp.server.lowlevel")
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def run():
+        params = StdioServerParameters(command=sys.executable,
+                                       args=["-m", "elem_rank.mcp_proxy", "--", "--headless", "--isolated"],
+                                       env={"PLAYWRIGHT_MCP": f"npx -y {PW_MCP}", "PATH": os.environ["PATH"]})
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            await s.call_tool("browser_navigate", {"url": site + "/negative.html"})
+
+            async def find(step):
+                return _text(await s.call_tool("browser_find_element", {"step": step}))
+
+            async def click(ref, element):
+                return _text(await s.call_tool("browser_click", {"target": ref, "element": element}))
+            await _negative_paths(find, click)
+
+    asyncio.run(run())
+
+
+def test_langchain_keeps_negative_path_messages(site, loc):
+    pytest.importorskip("langchain_mcp_adapters")
+    from langchain_mcp_adapters.tools import load_mcp_tools
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    from lite_locator.langchain import with_lite_locator
+
+    async def run():
+        params = StdioServerParameters(command="npx", args=["-y", PW_MCP, "--headless", "--isolated"])
+        async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            by = {t.name: t for t in with_lite_locator(await load_mcp_tools(s), locator=loc)}
+            await by["browser_navigate"].ainvoke({"url": site + "/negative.html"})
+            key = "target" if "target" in str(by["browser_click"].args_schema) else "ref"
+
+            async def find(step):
+                return str(await by["browser_find_element"].ainvoke({"step": step}))
+
+            async def click(ref, element):
+                return str(await by["browser_click"].ainvoke({key: ref, "element": element}))
+            await _negative_paths(find, click)
+
+    asyncio.run(run())

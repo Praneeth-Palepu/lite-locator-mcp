@@ -394,7 +394,7 @@ def act(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
     summary, the added/removed/changed elements, or "No change detected within N s" (after waiting for late
     responses). New tabs and browser dialogs are reported; dialog: "dismiss" (default) or "accept".
     action: click | dblclick | hover | fill | type | select | check | uncheck | press."""
-    from .diff import noise, outcome
+    from .diff import VALIDATION_ACTIONS, VALIDATION_JS, noise, outcome, validation_lines
     import time
     b1 = observe(page)
     page.wait_for_timeout(300)
@@ -413,16 +413,23 @@ def act(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
         except Exception:  # pages that never go idle (polling, websockets): fall back to polling the tree
             pass
         page.wait_for_timeout(int(POLL * 1000))
-        after = observe(page)
+        after, seen = observe(page), []
         while True:
-            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
+            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog), seen)
             if time.time() - t0 >= wait_max:
-                return text
+                break
             page.wait_for_timeout(int(POLL * 1000))
             nxt = observe(page)
             if "No change detected" not in text and nxt.snapshot == after.snapshot:
-                return text  # changed, and settled
+                break  # changed, and settled
+            seen.append(after.snapshot)
             after = nxt
+        if "No change detected" in text and action in VALIDATION_ACTIONS:  # a submit the browser itself blocked?
+            try:
+                text += "\n" + validation_lines(page.evaluate(VALIDATION_JS))
+            except Exception:  # page gone / navigated meanwhile
+                pass
+        return text.rstrip()
     finally:
         page.context.remove_listener("page", on_page)
         page.remove_listener("dialog", on_dialog)
@@ -430,7 +437,7 @@ def act(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
 
 async def aact(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss"):
     """act() for an async Playwright page."""
-    from .diff import noise, outcome
+    from .diff import VALIDATION_ACTIONS, VALIDATION_JS, noise, outcome, validation_lines
     import time
     b1 = await aobserve(page)
     await page.wait_for_timeout(300)
@@ -452,16 +459,23 @@ async def aact(page, hit, action, value=None, wait_max=WAIT_MAX, dialog="dismiss
         except Exception:
             pass
         await page.wait_for_timeout(int(POLL * 1000))
-        after = await aobserve(page)
+        after, seen = await aobserve(page), []
         while True:
-            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog))
+            text = outcome(before, after, quiet, time.time() - t0, _extra(tabs, dialogs, dialog), seen)
             if time.time() - t0 >= wait_max:
-                return text
+                break
             await page.wait_for_timeout(int(POLL * 1000))
             nxt = await aobserve(page)
             if "No change detected" not in text and nxt.snapshot == after.snapshot:
-                return text
+                break  # changed, and settled
+            seen.append(after.snapshot)
             after = nxt
+        if "No change detected" in text and action in VALIDATION_ACTIONS:  # a submit the browser itself blocked?
+            try:
+                text += "\n" + validation_lines(await page.evaluate(VALIDATION_JS))
+            except Exception:  # page gone / navigated meanwhile
+                pass
+        return text.rstrip()
     finally:
         page.context.remove_listener("page", on_page)
         page.remove_listener("dialog", on_dialog)

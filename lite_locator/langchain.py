@@ -19,7 +19,9 @@ import json
 import re
 import time
 
-from elem_rank.diff import Snap, noise, outcome, split_snapshot
+from elem_rank.diff import (SUMMARY_MESSAGES, VALIDATION_ACTIONS, VALIDATION_HINT, VALIDATION_JS, Snap, eval_json,
+                            noise, outcome, split_snapshot, validation_lines)
+from elem_rank.diff import messages as page_messages
 from elem_rank.locate import POLL, WAIT_MAX
 from elem_rank.locate import Locator
 from elem_rank.snapshot import DETAILS_JS, elements, needs_details
@@ -147,38 +149,54 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
         description=DESC.format(use="Pass a candidate's ref to browser_click, browser_type etc. (the `ref`/`target` "
                                     "argument your Playwright tools take).",
                                 fallback="call browser_snapshot to see the full page."))
-    def finish(text, pre, quiet, t0, again):
+    def finish(text, pre, quiet, t0, again, blocked=None):
         """Outcome of an action; if nothing changed yet, keep checking (slow responses) up to WAIT_MAX seconds."""
         rest, yaml, url, title = split_snapshot(text)
         after = Snap(url, title, yaml) if yaml else again()
         if after is None:
             return text
+        mids = []
         while True:
-            res = outcome(pre, after, quiet, time.time() - t0)
+            res = outcome(pre, after, quiet, time.time() - t0, seen=mids)
             if time.time() - t0 >= WAIT_MAX:
                 break
             time.sleep(POLL)
             nxt = again() or after
             if "No change detected" not in res and nxt.snapshot == after.snapshot:
                 break  # changed, and settled (lists re-rendered after a sort, results after a search)
+            mids.append(after.snapshot)
             after = nxt
+        if "No change detected" in res and blocked is not None:  # a submit the browser itself blocked?
+            try:
+                res = (f"{res}\n{validation_lines(eval_json(_text(blocked())))}" if blocked is not True
+                       else f"{res}\n{VALIDATION_HINT}").rstrip()
+            except Exception:  # an evaluate tool with other arguments, or an unexpected answer
+                pass
         seen["last"] = after
         return f"{rest}\n\n### Result\n{res}".strip()
 
-    async def afinish(text, pre, quiet, t0, again):
+    async def afinish(text, pre, quiet, t0, again, blocked=None):
         rest, yaml, url, title = split_snapshot(text)
         after = Snap(url, title, yaml) if yaml else await again()
         if after is None:
             return text
+        mids = []
         while True:
-            res = outcome(pre, after, quiet, time.time() - t0)
+            res = outcome(pre, after, quiet, time.time() - t0, seen=mids)
             if time.time() - t0 >= WAIT_MAX:
                 break
             await asyncio.sleep(POLL)
             nxt = (await again()) or after
             if "No change detected" not in res and nxt.snapshot == after.snapshot:
                 break
+            mids.append(after.snapshot)
             after = nxt
+        if "No change detected" in res and blocked is not None:  # a submit the browser itself blocked?
+            try:
+                res = (f"{res}\n{validation_lines(eval_json(_text(await blocked())))}" if blocked is not True
+                       else f"{res}\n{VALIDATION_HINT}").rstrip()
+            except Exception:  # an evaluate tool with other arguments, or an unexpected answer
+                pass
         seen["last"] = after
         return f"{rest}\n\n### Result\n{res}".strip()
 
@@ -215,6 +233,15 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 out = rewrite_code(out, sel, [o for o in opts if o["kind"] != "text"] or opts)
         return out
 
+    def checker(t, is_async):
+        """For clicks / key presses: a call that asks the page for fields its built-in validation marks invalid."""
+        if t.name.split("__")[-1] not in VALIDATION_ACTIONS:
+            return None
+        if evaluate is None:  # older Playwright MCP (0.0.29): the message can't be read, say what may have happened
+            return True
+        args = _fit(evaluate, {"function": VALIDATION_JS})
+        return (lambda: evaluate.ainvoke(args)) if is_async else (lambda: evaluate.invoke(args))
+
     def wrap(t):
         schema, drop = _lean(t) if lean else (t.args_schema, ())
         if t.name.endswith("browser_snapshot"):  # full tree on request: pass through (inline), remember it
@@ -237,7 +264,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 pre = await again_a()
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(await t.ainvoke(kw)), opts)
-                return await afinish(out, pre or seen["last"], quiet, t0, again_a)
+                return await afinish(out, pre or seen["last"], quiet, t0, again_a, checker(t, True))
 
             def again_s():
                 return _state(_text(snap.invoke({})))
@@ -248,7 +275,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 pre = again_s()
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(t.invoke(kw)), opts)
-                return finish(out, pre or seen["last"], quiet, t0, again_s)
+                return finish(out, pre or seen["last"], quiet, t0, again_s, checker(t, False))
         else:
             return t
         desc = t.description + ("" if t.name.endswith("browser_snapshot") else
@@ -281,8 +308,11 @@ def trim_snapshots(messages, keep=1):
     out = []
     for i, m in enumerate(messages):
         if i in drop:
-            head = _text(m.content).split("```yaml", 1)[0].strip()
-            m = m.model_copy(update={"content": head + "\n[full snapshot removed: superseded by later steps]"})
+            head, _, tree = _text(m.content).partition("```yaml")
+            msgs = page_messages(tree.split("```", 1)[0])  # errors / confirmations seen there stay: tests check them
+            keep_msgs = "".join(f"\nMessage on that page: {x}" for x in msgs[:SUMMARY_MESSAGES])
+            m = m.model_copy(update={"content": head.strip() + "\n[full snapshot removed: superseded by later steps]"
+                                                + keep_msgs})
         out.append(m)
     return out
 

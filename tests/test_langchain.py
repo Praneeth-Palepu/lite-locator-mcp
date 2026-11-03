@@ -150,3 +150,12 @@ def test_lean_drops_options_the_agent_does_not_need(loc):
     assert "doubleClick" not in props and "modifiers" not in props and "ref" in props
     by["browser_click"].invoke({"ref": "e2", "doubleClick": True})
     assert seen["click"]["doubleClick"] is False      # an option the LLM still sends is dropped
+
+
+def test_trim_keeps_the_messages_of_removed_snapshots():
+    from langchain_core.messages import ToolMessage
+    snap = lambda body: "Page URL: u\n```yaml\n" + body + "```"
+    msgs = [ToolMessage(snap('- alert:\n  - text: Email is required\n'), tool_call_id="1"),
+            ToolMessage(snap('- button "Send"\n'), tool_call_id="2")]
+    out = trim_snapshots(msgs)
+    assert "snapshot removed" in out[0].content and "Email is required" in out[0].content

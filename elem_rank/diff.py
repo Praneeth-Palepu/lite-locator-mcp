@@ -10,6 +10,8 @@ needs that outcome (to verify the step), not two full accessibility trees; where
 before / after: Snap(url, title, snapshot), where snapshot is accessibility-tree YAML: a Playwright MCP snapshot
 (refs are ignored, they change between snapshots) or Playwright's locator("body").aria_snapshot().
 """
+import json
+import re
 from collections import Counter, namedtuple
 from difflib import SequenceMatcher
 
@@ -23,7 +25,18 @@ REPLACED = 0.6  # more than this share of the tree changed: treat as a new view 
 REPLACED_MIN = 20  # ... on pages with at least this many elements
 
 
-Item = namedtuple("Item", "key line path node")
+Item = namedtuple("Item", "key line path node msg")
+MSG_ROLES = {"alert", "alertdialog", "status"}
+MSG_MAX = 300  # messages are kept whole (up to this length): a test needs the exact text
+SUMMARY_MESSAGES = 6
+# Words of feedback a page gives about an action (errors, validation, confirmations). Generic, not site-specific: they
+# only decide what is never dropped (truncation, noise filter, page summaries), never what is shown at all.
+MESSAGE = re.compile(
+    r"\b(errors?|invalid|required|mandatory|must|please|fail(ed|ure|s)?|incorrect|wrong|cannot|can't|unable|"
+    r"not (valid|found|allowed|available|match|matching|recognized|recognised|correct)|(do|does|did)(n't| not) match|"
+    r"mismatch|already (exists|registered|taken|in use|used)|too (short|long|many|few|large|small)|at (least|most)|"
+    r"minimum|maximum|exceed(s|ed)?|denied|locked|expired|forbidden|unauthori[sz]ed|warning|success(ful(ly)?)?|"
+    r"thank(s| you)|confirmed|has been (sent|saved|submitted|created|updated|added|deleted|removed))\b", re.I)
 CARD_MIN = 3  # card context only where a role repeats this often (product grids, result lists)
 
 
@@ -39,12 +52,15 @@ def _items(snapshot):
         if not (label or text or n.role in INTERACTIVE or n.role in GROUPS):
             continue
         st = [s for s in STATES if n.attrs.get(s) not in (None, False, "false")]
-        line = n.role + (f' "{label[:80]}"' if label and n.role != "text" else "") + (f": {text[:100]}" if text else "")
-        line += "".join(f" [{s}]" for s in st)
         group = next((a for a in _ancestors(n) if a.role in GROUPS), None)
+        msg = n.role not in INTERACTIVE and (n.role in MSG_ROLES or (group is not None and group.role in MSG_ROLES)
+                                             or bool(MESSAGE.search(label + " " + text)))
+        cut_l, cut_t = (MSG_MAX, MSG_MAX) if msg else (80, 100)
+        line = n.role + (f' "{label[:cut_l]}"' if label and n.role != "text" else "") + (f": {text[:cut_t]}" if text else "")
+        line += "".join(f" [{s}]" for s in st)
         if group is not None and group is not n:
             line += f'  (in {group.role}{" " + repr(group.name) if group.name else ""})'
-        out.append(Item((n.role, label[:80]), line, _path(n), n))
+        out.append(Item((n.role, label[:80]), line, _path(n), n, msg))
     return out
 
 
@@ -102,6 +118,18 @@ def summary(snap, headings=5):
         out.append("Headings: " + " | ".join(heads))
     if can:
         out.append("Has: " + can)
+    return out + [f"Message: {m}" for m in messages(snap.snapshot)[:SUMMARY_MESSAGES]]
+
+
+def messages(snapshot):
+    """Feedback texts on a page (alerts, status lines, error / validation / confirmation texts), whole and in page
+    order: kept in page summaries so a navigation or a re-rendered view never hides them."""
+    out = []
+    for x in _items(snapshot):
+        if x.msg:
+            t = x.node.label() or x.node.text
+            if t and t[:MSG_MAX] not in out:
+                out.append(t[:MSG_MAX])
     return out
 
 
@@ -115,47 +143,111 @@ def noise(s1, s2):
 
 def changes(before, after, ignore=frozenset()):
     """Added (+), removed (-) and changed (~) elements between two snapshots of the same page, in page order.
-    ignore: tree positions from noise() to leave out."""
+    ignore: tree positions from noise() to leave out (never messages: an error replacing a ticker is still an error)."""
+    out, share = _changes(before, after, ignore)
+    return [line for line, _ in out], share
+
+
+def _changes(before, after, ignore=frozenset()):
     a, b = _items(before), _items(after)
     sm = SequenceMatcher(None, [x.line for x in a], [x.line for x in b], autojunk=False)
     lines, changed = [], 0
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
             continue
-        old = [x for x in a[i1:i2] if x.path not in ignore]
-        new = [x for x in b[j1:j2] if x.path not in ignore]
+        old = [x for x in a[i1:i2] if x.msg or x.path not in ignore]
+        new = [x for x in b[j1:j2] if x.msg or x.path not in ignore]
         changed += max(len(old), len(new))
         olds = {x.key: x for x in old}
         paired = set()
         for x in new:
             if x.key in olds and x.key[1] and x.key not in paired:  # same element, new text / state
-                lines.append(f"~ {olds[x.key].line}  ->  {_with_card(x, b)}")
+                lines.append((f"~ {olds[x.key].line}  ->  {_with_card(x, b)}", x.msg or olds[x.key].msg))
                 paired.add(x.key)
             else:
-                lines.append(f"+ {_with_card(x, b)}")
-        lines += [f"- {_with_card(x, a).split(' [ref=')[0]}" for x in old if x.key not in paired]
+                lines.append((f"+ {_with_card(x, b)}", x.msg))
+        lines += [(f"- {_with_card(x, a).split(' [ref=')[0]}", x.msg) for x in old if x.key not in paired]
     return lines, changed / max(1, len(a), len(b))
+
+
+def _cap(lines):
+    """At most MAX_LINES lines, but every message line is kept (they are what a negative test checks)."""
+    if len(lines) <= MAX_LINES:
+        return [line for line, _ in lines], 0
+    room = max(0, MAX_LINES - sum(m for _, m in lines))
+    out, dropped = [], 0
+    for line, m in lines:
+        if m or room > 0:
+            out.append(line)
+            room -= not m
+        else:
+            dropped += 1
+    return out, dropped
+
+
+def briefly(before, seen, after):
+    """Messages that appeared after the action but were gone again by the end (toasts, flashes): lines to report."""
+    have = set(messages(before)) | set(messages(after))
+    out = []
+    for snap in seen:
+        for m in messages(snap):
+            if m not in have and m not in out:
+                out.append(m)
+    return [f"Shown briefly (gone now): {m}" for m in out]
 
 
 NO_CHANGE = ("No change detected within {secs:g} s. If this action submits, pays or deletes something, do not repeat "
              "it: check the page with browser_snapshot first.")
 
 
-def outcome(before, after, ignore=frozenset(), waited=0.6, extra=()):
-    """The result of one action as a few lines of text. extra: lines about new tabs / dialogs, shown first."""
+def outcome(before, after, ignore=frozenset(), waited=0.6, extra=(), seen=()):
+    """The result of one action as a few lines of text. extra: lines about new tabs / dialogs, shown first.
+    seen: snapshots taken while the page settled (YAML); messages shown only in those are reported as brief."""
     head = list(extra)
     nav = before is None or before.url.split("#")[0] != after.url.split("#")[0]
+    brief = briefly(before.snapshot if before else "", seen, after.snapshot)
     if nav:
-        return "\n".join(head + ["Navigated to a new page."] + summary(after) +
+        return "\n".join(head + ["Navigated to a new page."] + summary(after) + brief +
                          ["Use browser_find_element to locate elements on it."])
-    lines, share = changes(before.snapshot, after.snapshot, ignore)
-    if not lines:
+    lines, share = _changes(before.snapshot, after.snapshot, ignore)
+    if not lines and not brief:
         return "\n".join(head + [NO_CHANGE.format(secs=round(waited, 1))])
     if share > REPLACED and len(_items(after.snapshot)) >= REPLACED_MIN:  # small pages: show the changes themselves
-        return "\n".join(head + ["Same URL, but most of the page changed (new view)."] + summary(after) +
+        return "\n".join(head + ["Same URL, but most of the page changed (new view)."] + summary(after) + brief +
                          ["Use browser_find_element to locate elements on it."])
-    more = f"\n(+{len(lines) - MAX_LINES} more changes)" if len(lines) > MAX_LINES else ""
-    return "\n".join(head + ["Same page. Changes:"] + lines[:MAX_LINES]) + more
+    shown, dropped = _cap(lines)
+    more = f"\n(+{dropped} more changes)" if dropped else ""
+    return "\n".join(head + ["Same page. Changes:"] + shown + brief) + more
+
+
+VALIDATION_JS = """() => Array.from(document.querySelectorAll('input, select, textarea'))
+  .filter(e => e.willValidate && !e.validity.valid && e.validationMessage && e.getClientRects().length)
+  .slice(0, 10)
+  .map(e => ({field: (e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].innerText) ||
+                      e.placeholder || e.name || e.id || e.type || '').trim().slice(0, 80),
+              message: e.validationMessage.slice(0, 200)}))"""
+VALIDATION_HINT = ("If this click submits a form, the browser's built-in validation may have blocked it: its message is a "
+                   "tooltip, not part of the page (this Playwright MCP has no browser_evaluate to read it). Empty or "
+                   "malformed required fields are the usual cause.")
+VALIDATION_ACTIONS = {"click", "press", "browser_click", "browser_press_key"}
+
+
+def eval_json(text):
+    """The value a browser_evaluate tool returned (Playwright MCP wraps it in markdown; some versions quote it)."""
+    res = text.split("### Result", 1)[-1].split("###", 1)[0].strip().strip("`").removeprefix("json").strip()
+    val = json.loads(res)
+    return json.loads(val) if isinstance(val, str) else val
+
+
+def validation_lines(fields):
+    """Built-in browser form validation ("Please fill out this field.") is a tooltip, not part of the page tree: a
+    submit it blocks looks like "no change". These lines say why, with the browser's own messages."""
+    fields = [f for f in (fields or []) if isinstance(f, dict) and f.get("message")]
+    if not fields:
+        return ""
+    return "\n".join(["The browser's built-in form validation marks these fields invalid (shown as a tooltip, "
+                      "not in the page; a submit is blocked while they are):"] +
+                     [f'- "{f.get("field") or "field"}": {f["message"]}' for f in fields])
 
 
 def split_snapshot(text):

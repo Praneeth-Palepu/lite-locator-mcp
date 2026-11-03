@@ -1,0 +1,25 @@
+<!doctype html><html><head><title>Negative paths</title></head><body>
+<main>
+<h1>Account</h1>
+<form aria-label="Newsletter" onsubmit="event.preventDefault(); document.getElementById('ok').textContent = 'Subscribed';">
+  <label for="email">Email</label> <input id="email" type="email" required>
+  <button id="subscribe">Subscribe</button>
+</form>
+<p id="ok"></p>
+<button id="save">Save draft</button>
+<div id="toast"></div>
+<form aria-label="Sign in" onsubmit="event.preventDefault(); location.href = 'negative.html?error=1';">
+  <input aria-label="Username" name="u"> <button id="signin">Sign in</button>
+</form>
+<div id="err"></div>
+</main>
+<script>
+if (location.search.includes('error=1'))
+  document.getElementById('err').innerHTML = '<div role="alert">Invalid username or password. Please try again.</div>';
+document.getElementById('save').onclick = () => {
+  setTimeout(() => {
+    document.getElementById('toast').innerHTML = '<div role="status">Draft saved</div>';
+    setTimeout(() => { document.getElementById('toast').innerHTML = ''; }, 900);
+  }, 100);
+};
+</script></body></html>

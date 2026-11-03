@@ -2,6 +2,30 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.1.9 (2026-11-03)
+**What:** the page's feedback (error, validation and confirmation messages) always reaches the LLM, so negative test
+cases can be written from it. Six places where it could be lost are fixed:
+- A navigation (e.g. a failed login that loads another URL) or a re-rendered view gave only title, headings and
+  element counts: page summaries now list the messages on the page (`Message: …`).
+- The 25-line cap on change reports could cut messages: message lines are always kept; only other lines are capped.
+- The ticker / carousel filter could hide a message that appeared where text had been changing by itself: messages
+  are exempt.
+- Change lines cut texts at 100 characters: messages are kept whole (up to 300).
+- A toast that appeared and went away while the page settled was not reported: `Shown briefly (gone now): …`.
+- A submit blocked by the browser's built-in validation looked like "no change" (its tooltip is not in the
+  accessibility tree): the browser's own message per field is reported, read with one `browser_evaluate` call after
+  a click / key press with no change (Page API, proxy, LangChain wrapper). Playwright MCP 0.0.29 has no
+  `browser_evaluate`; there a hint says validation may have blocked the submit.
+- `trim_snapshots` / `snapshot_hook` replaced old snapshots with a stub: the stub now keeps their messages.
+Also: a candidate line pasted as a ref with a frame-style ref (`[ref=f1e11]`, used by Playwright MCP after some
+navigations) is now reduced to the ref, as `e12` refs already were.
+**Why:** owner: some negative tests were missing when exploring with the library. A check of every place where page
+content is reduced (change reports, summaries, caps, filters, history trimming) found the six gaps above.
+**Checked:** new tests for each gap (7 of them fail on 0.1.8), on a local page and with the real Playwright MCP
+(0.0.83 through the proxy and the wrapper, 0.0.29 through the wrapper); live SauceDemo through the proxy: the locked-out
+user's error and all three checkout "is required" errors are reported; regression runs on practicesoftwaretesting.com
+and demoblaze.com; full release checks in `ci/reports/0.1.9.md`.
+
 ## 0.1.8 (2026-10-31)
 **What:** documentation only. The README opens with what the library does and what it was measured to do (test cases
 in any format, ≈ 1,000 tokens per test case, stable generated tests, results on two test suites), without

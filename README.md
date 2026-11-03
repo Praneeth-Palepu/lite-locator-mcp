@@ -182,13 +182,19 @@ Arguments after `--` go to Playwright MCP. Options: `--lam 0.005|0.01|0.02` (mor
 
 | After the action | The LLM gets |
 |---|---|
-| A new page | `Navigated to a new page.` + title, URL, main headings, what can be done there |
+| A new page | `Navigated to a new page.` + title, URL, main headings, what can be done there, and every message on it (`Message: Invalid username or password`) |
 | Part of the page changed | `Same page. Changes:` + `+` added, `-` removed, `~` changed elements, with the card (product) for repeated buttons |
 | Nothing changed, even after waiting up to 3 s for slow responses | `No change detected within 3 s. If this action submits, pays or deletes something, do not repeat it: check the page with browser_snapshot first.` |
 | A new tab or a browser dialog | `A new tab opened: …` / `A browser dialog appeared: '…' (it was dismissed)`; `act(..., dialog="accept")` to accept |
+| A submit blocked by the browser's built-in validation | `No change detected …` + the browser's own message per field (`"Email": Please fill out this field.`), read with `browser_evaluate`; without it (Playwright MCP 0.0.29) a hint that validation may have blocked it |
+| A message that appeared and went away while the page settled (toast) | `Shown briefly (gone now): Draft saved` |
 
 Changes that happen by themselves (tickers, carousels, timers) are filtered out: the page is compared with itself just
 before the action.
+
+Messages (alerts, status lines, error / validation / confirmation texts) are never dropped, so negative test cases
+can be written from them: they are kept whole, they are exempt from the change-line cap and the ticker filter, page
+summaries list them, and `trim_snapshots` keeps the messages of the snapshots it removes.
 
 ## Limits
 

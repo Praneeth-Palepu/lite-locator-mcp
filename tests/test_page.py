@@ -133,3 +133,21 @@ def test_ordinal_step_on_a_page(page, site, loc):
     assert "Long Nose Pliers" in loc.find(page, "Open the first product")[0]["name"]
     assert "$12.01" in loc.find(page, "open the last product")[0]["doc"]
     assert loc.find(page, "Enter first name")[0]["role"] == "textbox"
+
+
+def test_blocked_submit_reports_the_browsers_validation_message(page, site, loc):
+    page.goto(site + "/negative.html")
+    out = act(page, page.locator("#subscribe"), "click", wait_max=1.0)
+    assert "built-in form validation" in out and '"Email"' in out and "fill out" in out.lower()
+
+
+def test_error_on_the_next_page_is_in_the_navigation_summary(page, site, loc):
+    page.goto(site + "/negative.html")
+    out = act(page, page.locator("#signin"), "click")
+    assert out.startswith("Navigated") and "Invalid username or password" in out
+
+
+def test_short_lived_toast_is_not_lost(page, site, loc):
+    page.goto(site + "/negative.html")
+    out = act(page, page.locator("#save"), "click")
+    assert "Draft saved" in out

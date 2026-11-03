@@ -43,7 +43,8 @@ except (ImportError, PackageNotFoundError):  # the library API needs no MCP (any
 
 import numpy as np
 
-from .diff import Snap, noise, outcome, split_snapshot
+from .diff import (VALIDATION_ACTIONS, VALIDATION_HINT, VALIDATION_JS, Snap, eval_json, noise, outcome, split_snapshot,
+                   validation_lines)
 from .locate import POLL, WAIT_MAX
 from .snapshot import DETAILS_JS, demote_orphans, elements, line, merge_details, needs_details
 from .steps import clean_args
@@ -147,15 +148,24 @@ async def main():
             after = Snap(url, title, yaml) if yaml else (None if res.is_error else await state())
             if after is None:
                 return res
+            mids = []
             while True:
-                out = outcome(pre or last, after, quiet, time.time() - t0)
+                out = outcome(pre or last, after, quiet, time.time() - t0, seen=mids)
                 if time.time() - t0 >= WAIT_MAX:
                     break
                 await asyncio.sleep(POLL)
                 nxt = (await state()) or after
                 if "No change detected" not in out and nxt.snapshot == after.snapshot:
                     break  # changed and settled
+                mids.append(after.snapshot)
                 after = nxt
+            if "No change detected" in out and name in VALIDATION_ACTIONS:  # a submit the browser itself blocked?
+                try:
+                    v = validation_lines(eval_json(text_of(await child.call_tool("browser_evaluate",
+                                                                                {"function": VALIDATION_JS}))))
+                    out = f"{out}\n{v}".rstrip()
+                except Exception:  # older Playwright MCP without browser_evaluate, or an unexpected answer
+                    out = f"{out}\n{VALIDATION_HINT}"
             seen["last"] = after
             out = f"{rest}\n\n### Result\n{out}".strip()
             other = [c for c in res.content if getattr(c, "type", "") != "text"]  # e.g. images stay as they are
@@ -195,7 +205,7 @@ async def main():
             out.append("If no candidate fits the step, call browser_snapshot for the full page.")
             return types.CallToolResult(content=[types.TextContent(type="text", text="\n".join(out))])
 
-        server = Server("lite-locator-mcp", version="0.1.8", on_list_tools=list_tools, on_call_tool=call_tool,
+        server = Server("lite-locator-mcp", version="0.1.9", on_list_tools=list_tools, on_call_tool=call_tool,
                         instructions="Use browser_find_element to locate elements for a step; browser_snapshot "
                                      "when no candidate fits or a check needs the whole page. Actions return what "
                                      "changed; if no change was detected, do not repeat a submit, payment or delete.")

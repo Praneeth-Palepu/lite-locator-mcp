@@ -45,7 +45,7 @@ def target_of(step):
     return step
 
 
-REF = re.compile(r"ref=(e\d+)|\[(e\d+)\]|^(e\d+)\b")
+REF = re.compile(r"ref=((?:f\d+)?e\d+)|\[((?:f\d+)?e\d+)\]|^((?:f\d+)?e\d+)\b")  # f1e11: refs inside frames / after a navigation
 
 
 def clean_ref(value):
