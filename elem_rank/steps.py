@@ -46,12 +46,13 @@ def target_of(step):
 
 
 # f1e11: refs inside frames / after a navigation
-REF = re.compile(r"ref=((?:f\d+)?e\d+)|\[((?:f\d+)?e\d+)\]|^((?:f\d+)?e\d+)\b")
+REF = re.compile(r"ref\s*[=:]\s*((?:f\d+)?e\d+)|\[((?:f\d+)?e\d+)\]|^((?:f\d+)?e\d+)\b")
+BARE_REF = re.compile(r"^(?:f\d+)?e\d+$")
 
 
 def clean_ref(value):
     """A candidate line pasted as a ref ('checkbox "Pliers" [ref=e225]') -> 'e225'; anything else unchanged."""
-    if isinstance(value, str) and "ref=" in value:
+    if isinstance(value, str) and re.search(r"ref\s*[=:]", value):
         m = REF.search(value)
         if m:
             return next(g for g in m.groups() if g)
@@ -67,6 +68,9 @@ def clean_args(name, args):
             args[k] = clean_ref(args[k])
     if name.endswith("browser_snapshot"):
         args.pop("filename", None)
+        for k in ("ref", "target"):     # a snapshot scoped to a made-up selector fails: take the whole page
+            if k in args and not BARE_REF.match(str(args[k] or "")):
+                args.pop(k)
     return args
 
 

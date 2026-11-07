@@ -58,6 +58,18 @@ def _lean(t):
                 required=[k for k in schema.get("required", []) if k not in drop]), drop
 
 
+def _short_tabs(text):
+    """Playwright MCP lists every open tab (with its full URL) in each response once a second tab is open, e.g. after
+    a click opened a sign-in-with-Google popup; keep one line instead, so the outcome stays visible."""
+    m = re.search(r"### Open tabs\n((?:- .*\n?)+)", text)
+    if not m:
+        return text
+    tabs = m.group(1).strip().splitlines()
+    cur = next((t for t in tabs if "(current)" in t), tabs[0])
+    line = f"### Open tabs\n{len(tabs)} tabs open; working in: {re.sub(r'\\(http[^)]*\\)', '', cur)[:120]}\n"
+    return text[:m.start()] + line + text[m.end():]
+
+
 def _text(out):
     """Tool output as text, whatever shape the adapter version returns (str, content blocks, (content, artifact))."""
     if isinstance(out, tuple):
@@ -185,7 +197,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
             except Exception:  # an evaluate tool with other arguments, or an unexpected answer
                 pass
         seen["last"] = after
-        return f"{rest}\n\n### Result\n{res}".strip()
+        return _short_tabs(f"{rest}\n\n### Result\n{res}".strip())
 
     async def afinish(text, pre, quiet, t0, again, blocked=None):
         rest, yaml, url, title = split_snapshot(text)
@@ -210,7 +222,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
             except Exception:  # an evaluate tool with other arguments, or an unexpected answer
                 pass
         seen["last"] = after
-        return f"{rest}\n\n### Result\n{res}".strip()
+        return _short_tabs(f"{rest}\n\n### Result\n{res}".strip())
 
     def before_state(pre):
         """Positions that change by themselves (tickers): those since the last look, on the same page."""

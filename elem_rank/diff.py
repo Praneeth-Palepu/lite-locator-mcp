@@ -45,8 +45,9 @@ def _items(snapshot):
     (role "name": text [state]), path = position in the tree (stable while text changes: used for the noise filter)."""
     out = []
     for n in parse_tree(snapshot).walk():
-        if n.role == "document" or (n.role in CONTAINERS and not n.name and n.role not in GROUPS):
-            continue
+        if n.role == "document" or (n.role in CONTAINERS and not n.name and n.role not in GROUPS
+                                    and not (n.text and MESSAGE.search(n.text))):
+            continue   # (an unnamed container whose own text is feedback, e.g. an error div without role=alert, stays)
         label = n.name or (n.text if n.role != "text" else "")
         text = n.text if n.text and n.text != label else ""
         if not (label or text or n.role in INTERACTIVE or n.role in GROUPS):

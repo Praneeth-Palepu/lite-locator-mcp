@@ -123,11 +123,25 @@ class Recorder:
             if "built-in form validation" in (result or "") else []
         for _, m in valid:
             self.texts.add(m.lower())
+        # text that appeared on the same page (results of a search, a count, a status line): the outcome on an SPA
+        # whose URL does not change and which shows no alert
+        changes = (result or "").split("Same page. Changes:", 1)[1] if "Same page. Changes:" in (result or "") else ""
+        appeared = []
+        found = re.findall(r'^\+ (?:heading|paragraph|status|text|cell|listitem|generic|link) "?([^"\n]{3,120})', changes, re.M)
+        # changed values too, e.g. a cart badge: ~ link "cart": 1  ->  link "cart": 2
+        found += [f"{a.strip()} -> {b.strip()}" for a, b in re.findall(r'^~ (.{3,80}?)\s+->\s+(.{1,80}?)(?:\s*\[ref=[^\]]*\])?$',
+                                                                       changes, re.M) if not a.startswith("textbox")]
+        for text in found:
+            text = re.sub(r"\s*\[ref=[^\]]*\]", "", text).strip().rstrip('"').strip()
+            if text and text not in new and text not in appeared and len(appeared) < 6:
+                appeared.append(text)
+        for t in appeared:
+            self.texts.add(t.lower())
         target = self._target(args, pre)
         step = {"tool": name, "page": _page_key(pre.url if pre else (after.url if after else "")),
                 "target": target, "value": self._value(name, args),
                 "to": _page_key(after.url) if after and pre and _page_key(after.url) != _page_key(pre.url) else "",
-                "messages": new, "validation": [f'"{f}": {m}' for f, m in valid],
+                "messages": new, "validation": [f'"{f}": {m}' for f, m in valid], "appeared": appeared,
                 "no_change": "No change detected" in (result or "") and not new and not valid,
                 "error": bool(re.search(r"(?m)^(?:### Error|Error\b)", result or ""))}
         if name in SUBMITS and pre is not None:      # the form as it was when it was submitted
@@ -209,6 +223,7 @@ class Recorder:
             bits.append(f"went to {s['to']}")
         bits += [f'shows "{m}"' for m in s["messages"]]
         bits += [f"browser validation {v}" for v in s["validation"]]
+        bits += [f'"{t}" appeared' for t in s.get("appeared", [])]
         if s["no_change"]:
             bits.append("no visible change")
         if s["error"]:
