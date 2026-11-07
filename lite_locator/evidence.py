@@ -33,7 +33,7 @@ not invent texts, values or locators that are not in it.
 {record}"""
 
 
-def followup_hook(recorder, code=True, max_steps=120):
+def followup_hook(recorder, code=True, max_steps=120, trim=True):
     """LangGraph pre_model_hook for an agent that explores a site and is then asked to do something with what it saw
     in the same conversation: write test cases, write test scripts, a bug report...
 
@@ -41,19 +41,33 @@ def followup_hook(recorder, code=True, max_steps=120):
     message), every LLM call from then on gets the first task, the recorder's compact record and the messages since
     that instruction, instead of the whole exploration (which is what made writing cost as much as exploring).
     code=True adds the Playwright code each action ran (its locators), which script writers need.
-    Use with with_lite_locator(..., recorder=recorder). The stored history is kept as it is."""
+    Use with with_lite_locator(..., recorder=recorder). The stored history is kept as it is; the library never writes
+    the cases or scripts itself, it only decides what goes into the agent's calls.
+
+    Prompt caching (OpenAI, Azure OpenAI, Gemini, Claude bill a repeated prefix at a fraction of the price): the
+    writing-phase input is the same from call to call while the record does not change, so it caches. While exploring,
+    trim=True drops superseded full snapshots, which changes earlier messages and so misses the cache from there on;
+    with a caching provider, pass trim=False to keep the exploration history append-only."""
     from langchain_core.messages import HumanMessage
 
     from .langchain import trim_snapshots
 
+    frozen = {}
+
     def hook(state):
         msgs = state["messages"]
         humans = [i for i, m in enumerate(msgs) if getattr(m, "type", "") == "human"]
-        if len(humans) < 2 or not recorder.steps or \
-                not any(getattr(m, "type", "") == "tool" for m in msgs[humans[0]:humans[-1]]):
-            return {"llm_input_messages": trim_snapshots(msgs)}       # still exploring
-        note = FOLLOW_UP.format(task=msgs[humans[0]].content, record=recorder.pack(max_steps=max_steps, code=code),
-                                code_note=" (with the Playwright code each action ran: its locators)" if code else "")
-        return {"llm_input_messages": [HumanMessage(note)] + trim_snapshots(msgs[humans[-1]:])}
+        # the first instruction that came after the agent had acted: from there on, it is a follow-up
+        follow = next((h for h in humans[1:] if any(getattr(m, "type", "") == "tool" for m in msgs[humans[0]:h])), None)
+        if follow is None or not recorder.steps:
+            return {"llm_input_messages": trim_snapshots(msgs) if trim else msgs}       # still exploring
+        if frozen.get("at") != follow:   # the record as it was when the follow-up began: later actions are in the
+            frozen["at"] = follow        # messages after it, and a fixed first message keeps the prompt cache hitting
+            frozen["note"] = FOLLOW_UP.format(
+                task=msgs[humans[0]].content, record=recorder.pack(max_steps=max_steps, code=code),
+                code_note=" (with the Playwright code each action ran: its locators)" if code else "")
+        note = frozen["note"]
+        tail = msgs[follow:]
+        return {"llm_input_messages": [HumanMessage(note)] + (trim_snapshots(tail) if trim else tail)}
 
     return hook

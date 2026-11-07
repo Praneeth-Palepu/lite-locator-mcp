@@ -204,3 +204,18 @@ def test_followup_hook_gives_the_record_instead_of_the_exploration():
     out = hook({"messages": msgs + [HumanMessage("Now write the Playwright test scripts")]})["llm_input_messages"]
     assert len(out) == 2 and "Explore the checkout" in out[0].content and "What was done" in out[0].content
     assert "big tool output" not in out[0].content and out[1].content == "Now write the Playwright test scripts"
+
+
+def test_followup_hook_input_is_stable_across_writing_calls():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from lite_locator.evidence import followup_hook
+    rec = explored()
+    hook = followup_hook(rec, trim=False)
+    call = AIMessage("", tool_calls=[{"name": "browser_click", "args": {"ref": "e3"}, "id": "c1"}])
+    msgs = [HumanMessage("Explore"), call, ToolMessage("```yaml\n- button \"x\"\n```", tool_call_id="c1"),
+            AIMessage("DONE"), HumanMessage("Write the cases")]
+    assert hook({"messages": msgs[:4]})["llm_input_messages"] == msgs[:4]        # exploring: append-only, untouched
+    first = hook({"messages": msgs})["llm_input_messages"]
+    second = hook({"messages": msgs + [AIMessage("part 1"), HumanMessage("continue")]})["llm_input_messages"]
+    assert second[:len(first)] == first                                          # same prefix: the cache can hit
