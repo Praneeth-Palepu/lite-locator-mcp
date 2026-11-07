@@ -106,3 +106,101 @@ def test_merge_cases_tags_observed_cases_with_criteria():
     cases = merge_cases(obs, written)
     assert cases[0]["ac"] == [2] and cases[0]["source"] == "observed" and cases[-1]["title"] == "x"
     assert len(cases) == len(obs) + 1 and check(cases, ["a", "b"], rec)["uncovered"] == []
+
+
+class FakeShop:
+    """A tiny browser for probe(): a login page and a checkout form that needs a signed-in session. Each call is fed
+    to the recorder like with_lite_locator does. A new session (signed out) is the state probe() starts in."""
+    def __init__(self, rec):
+        self.rec, self.url, self.user, self.signed_in, self.vals = rec, "https://shop.test/", "", False, {}
+
+    def snap(self, extra=""):
+        if self.url.endswith("/checkout"):
+            body = FORM
+            for name, ref in (("First Name", "e10"), ("Last Name", "e11")):
+                if self.vals.get(name):
+                    body = body.replace(f'"{name}" [ref={ref}]', f'"{name}" [ref={ref}]: {self.vals[name]}')
+            return Snap(self.url, "Shop", body + extra)
+        body = LOGIN.replace('"Username" [ref=e1]', f'"Username" [ref=e1]: {self.user}') if self.user else LOGIN
+        return Snap(self.url, "Shop", body)
+
+    async def __call__(self, name, args):
+        pre, extra = self.snap(), ""
+        if name == "browser_navigate":
+            self.url = args["url"] if self.signed_in or not args["url"].endswith("/checkout") else "https://shop.test/"
+            self.vals = {}
+        elif name == "browser_type":
+            if args["ref"] == "e1":
+                self.user = args["text"]
+            else:
+                self.vals[{"e10": "First Name", "e11": "Last Name"}[args["ref"]]] = args["text"]
+        elif name == "browser_click" and args["ref"] == "e3" and self.user:
+            self.signed_in, self.url = True, "https://shop.test/checkout"
+        elif name == "browser_click" and args["ref"] == "e12":
+            empty = [k for k in ("First Name", "Last Name") if not self.vals.get(k)]
+            extra = f'- alert:\n  - text: "Error: {empty[0]} is required"\n' if empty else ""
+        if name != "browser_snapshot":
+            self.rec.action(name, args, pre, self.snap(extra), "Same page")
+        else:
+            self.rec.see(self.snap())
+        return ""
+
+
+def test_probe_signs_in_again_when_the_session_has_ended():
+    import asyncio
+    rec = explored()
+    assert [f["untried"] for f in rec.forms()] == [["Last Name"]]
+    log = asyncio.run(rec.probe(FakeShop(rec)))
+    assert log == ["/checkout Last Name empty: Error: Last Name is required"]
+
+
+def test_links_and_menu_items_are_not_form_submits():
+    rec = Recorder()
+    u = "https://shop.test/"
+    page = '- textbox "Search" [ref=e1]: pliers\n- link "Slip Joint Pliers" [ref=e2]\n'
+    rec.action("browser_click", {"ref": "e2"}, Snap(u, "Shop", page),
+               Snap("https://shop.test/product/1", "Shop", '- heading "Slip Joint Pliers"\n'), "Navigated")
+    assert rec.forms() == [] and rec.gaps() == []
+
+
+def test_role_less_error_div_on_page_results_and_code_are_recorded():
+    rec = Recorder()
+    u = "https://shop.test/login"
+    page = '- textbox "Email" [ref=e1]: a@b.c\n- textbox "Password" [ref=e2]: x\n- button "Login" [ref=e3]\n'
+    res = ("### Ran Playwright code\n```js\nawait page.locator('[data-test=\"login-submit\"]').click();\n```\n"
+           "### Result\nSame page. Changes:\n+ generic \"Invalid email or password\" [ref=e9]")
+    rec.action("browser_click", {"ref": "e3"}, Snap(u, "Shop", page),
+               Snap(u, "Shop", page + "- generic [ref=e9]: Invalid email or password\n"), res)
+    s = rec.steps[-1]
+    assert s["messages"] == ["Invalid email or password"]
+    assert s["code"] == "page.locator('[data-test=\"login-submit\"]').click()"
+    assert "code: page.locator" in rec.pack(code=True) and "code:" not in rec.pack()
+    res2 = ("### Result\nSame page. Changes:\n+ heading \"Searched for: Pliers\" [ref=e5]\n"
+            "+ paragraph \"4 products found\" [ref=e6]\n~ link \"cart\": 1  ->  link \"cart\": 2 [ref=e7]")
+    rec.action("browser_click", {"ref": "e3"}, Snap(u, "Shop", page), Snap(u, "Shop", page), res2)
+    assert rec.steps[-1]["appeared"] == ["Searched for: Pliers", "4 products found", 'link "cart": 1 -> link "cart": 2']
+
+
+def test_repeated_failed_sign_in_adds_a_lockout_note():
+    rec = Recorder()
+    u = "https://shop.test/login"
+    page = '- textbox "Email" [ref=e1]: a@b.c\n- textbox "Password" [ref=e2]: x\n- button "Login" [ref=e3]\n'
+    err = Snap(u, "Shop", page + '- alert: "Invalid email or password"\n')
+    assert rec.action("browser_click", {"ref": "e3"}, Snap(u, "Shop", page), err, "") is None
+    note = rec.action("browser_click", {"ref": "e3"}, Snap(u, "Shop", page), err, "")
+    assert note and "failed 2 times" in note
+
+
+def test_followup_hook_gives_the_record_instead_of_the_exploration():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from lite_locator.evidence import followup_hook
+    rec = explored()
+    hook = followup_hook(rec)
+    call = AIMessage("", tool_calls=[{"name": "browser_click", "args": {"ref": "e3"}, "id": "c1"}])
+    msgs = [HumanMessage("Explore the checkout"), call, ToolMessage("Navigated ... big tool output", tool_call_id="c1"),
+            AIMessage("DONE")]
+    assert len(hook({"messages": msgs})["llm_input_messages"]) == 4          # still exploring: unchanged
+    out = hook({"messages": msgs + [HumanMessage("Now write the Playwright test scripts")]})["llm_input_messages"]
+    assert len(out) == 2 and "Explore the checkout" in out[0].content and "What was done" in out[0].content
+    assert "big tool output" not in out[0].content and out[1].content == "Now write the Playwright test scripts"

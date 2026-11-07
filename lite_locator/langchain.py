@@ -66,7 +66,8 @@ def _short_tabs(text):
         return text
     tabs = m.group(1).strip().splitlines()
     cur = next((t for t in tabs if "(current)" in t), tabs[0])
-    line = f"### Open tabs\n{len(tabs)} tabs open; working in: {re.sub(r'\\(http[^)]*\\)', '', cur)[:120]}\n"
+    cur = re.sub(r"\(https?://[^)]*\)", "", cur).strip()
+    line = f"### Open tabs\n{len(tabs)} tabs open; working in: {cur[:120]}\n"
     return text[:m.start()] + line + text[m.end():]
 
 
@@ -126,11 +127,14 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 recorder.see(st)
 
     def record(t, kw, pre, out):
+        """Feed the recorder; it may add a short note for the agent (repeated failed sign-ins)."""
         if recorder is not None:
             try:
-                recorder.action(t.name, kw, pre, seen["last"], out)
+                note = recorder.action(t.name, kw, pre, seen["last"], out)
+                return f"{out}\n{note}" if note else out
             except Exception:  # evidence is a by-product: never break the agent's action
                 pass
+        return out
 
     def run(text, step, max, details=None):
         if "[ref=" not in text:  # no page open or an error message: pass it through
@@ -289,8 +293,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(await t.ainvoke(kw)), opts)
                 out = await afinish(out, pre or seen["last"], quiet, t0, again_a, checker(t, True))
-                record(t, kw, pre, out)
-                return out
+                return record(t, kw, pre, out)
 
             def again_s():
                 return _state(_text(snap.invoke({})))
@@ -302,8 +305,7 @@ def with_lite_locator(tools, locator=None, lam=0.01, name="browser_find_element"
                 quiet, t0 = before_state(pre), time.time()
                 out = stabilize(_text(t.invoke(kw)), opts)
                 out = finish(out, pre or seen["last"], quiet, t0, again_s, checker(t, False))
-                record(t, kw, pre, out)
-                return out
+                return record(t, kw, pre, out)
         else:
             return t
         desc = t.description + ("" if t.name.endswith("browser_snapshot") else

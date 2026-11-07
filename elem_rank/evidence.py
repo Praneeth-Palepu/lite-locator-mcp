@@ -36,6 +36,11 @@ VERB = {"browser_click": "Click", "browser_type": "Type", "browser_fill_form": "
 SUBMITS = {"browser_click", "browser_press_key"}
 REFLIKE = re.compile(r"^(?:f\d+)?e\d+$")
 # buttons that leave a form rather than submit it
+APPEARED = re.compile(r'^\+ (?:heading|paragraph|status|text|cell|listitem|generic|link) "?([^"\n]{3,120})', re.M)
+CHANGED = re.compile(r"^~ (.{3,80}?)\s+->\s+(.{1,80}?)(?:\s*\[ref=[^\]]*\])?$", re.M)
+AUTH_FAIL = re.compile(r"(?i)\b(invalid|incorrect|wrong|do(es)? not match)\b.{0,60}\b(password|credentials|e-?mail|"
+                       r"user(name)?|login)\b|\b(password|credentials|login)\b.{0,40}\b(invalid|incorrect|wrong)\b|"
+                       r"\blocked\b")
 LEAVE = re.compile(r"(?i)\b(cancel|back|close|reset|clear|log ?out|sign ?out|continue shopping|remove)\b")
 
 
@@ -47,6 +52,16 @@ def _page_key(url):
 def _selector(t):
     """A CSS selector rather than a 'role "name"' label."""
     return bool(t) and not t.startswith(tuple(f"{r} " for r in FIELDS | CONTROLS)) and bool(re.search(r"[#.\[\]=>:]", t))
+
+
+def _code(result):
+    """The Playwright code an action ran (Playwright MCP reports it), e.g. page.locator('[data-test="email"]').fill('x')
+    - the locators a test script needs."""
+    m = re.search(r"### Ran Playwright code\n```\w*\n(.+?)\n```", result or "", re.S)
+    if not m:
+        return ""
+    lines = [ln.strip().removeprefix("await ").rstrip(";") for ln in m.group(1).splitlines() if ln.strip()]
+    return "; ".join(lines)[:240]
 
 
 def _short(t, n=80):
@@ -127,10 +142,9 @@ class Recorder:
         # whose URL does not change and which shows no alert
         changes = (result or "").split("Same page. Changes:", 1)[1] if "Same page. Changes:" in (result or "") else ""
         appeared = []
-        found = re.findall(r'^\+ (?:heading|paragraph|status|text|cell|listitem|generic|link) "?([^"\n]{3,120})', changes, re.M)
+        found = re.findall(APPEARED, changes)
         # changed values too, e.g. a cart badge: ~ link "cart": 1  ->  link "cart": 2
-        found += [f"{a.strip()} -> {b.strip()}" for a, b in re.findall(r'^~ (.{3,80}?)\s+->\s+(.{1,80}?)(?:\s*\[ref=[^\]]*\])?$',
-                                                                       changes, re.M) if not a.startswith("textbox")]
+        found += [f"{a.strip()} -> {b.strip()}" for a, b in re.findall(CHANGED, changes) if not a.startswith("textbox")]
         for text in found:
             text = re.sub(r"\s*\[ref=[^\]]*\]", "", text).strip().rstrip('"').strip()
             if text and text not in new and text not in appeared and len(appeared) < 6:
@@ -142,6 +156,7 @@ class Recorder:
                 "target": target, "value": self._value(name, args),
                 "to": _page_key(after.url) if after and pre and _page_key(after.url) != _page_key(pre.url) else "",
                 "messages": new, "validation": [f'"{f}": {m}' for f, m in valid], "appeared": appeared,
+                "code": _code(result),
                 "no_change": "No change detected" in (result or "") and not new and not valid,
                 "error": bool(re.search(r"(?m)^(?:### Error|Error\b)", result or ""))}
         if name in SUBMITS and pre is not None:      # the form as it was when it was submitted
@@ -150,6 +165,13 @@ class Recorder:
             step["to"] = _page_key(args.get("url", ""))
             step["url"] = args.get("url", "")
         self.steps.append(step)
+        if name in SUBMITS and any(AUTH_FAIL.search(m) for m in new):
+            fails = sum(1 for s in self.steps if s["page"] == step["page"] and s["tool"] in SUBMITS
+                        and any(AUTH_FAIL.search(m) for m in s["messages"]))
+            if fails >= 2:
+                return (f"Note: sign-in on this page has failed {fails} times. Many sites lock the account after a "
+                        "few failed attempts: do not try again with this account.")
+        return None
 
     @staticmethod
     def _target(args, pre):
@@ -178,9 +200,10 @@ class Recorder:
         return filled, empty
 
     # -- output --------------------------------------------------------------------------------------------------
-    def pack(self, max_steps=80):
+    def pack(self, max_steps=80, code=False):
         """The evidence as compact text for a test-case writer: pages, the actions in order with what they caused,
-        and every exact message with the action that caused it."""
+        and every exact message with the action that caused it. code=True adds the Playwright code each action ran
+        (its locator), for writing test scripts."""
         out = [f"Site: {self.origin}", "", "Pages (fields, controls, amounts, messages seen):"]
         for key, p in sorted(self.pages.items(), key=lambda kv: kv[1]["order"]):
             heads = f"  headings: {' | '.join(p['headings'])}" if p["headings"] else ""
@@ -199,6 +222,8 @@ class Recorder:
         steps = self.steps[-max_steps:]
         for i, s in enumerate(steps, 1):
             out.append(f"{i}. {self.step_text(s)}{self._effect(s)}")
+            if code and s.get("code"):
+                out.append(f"   code: {s['code']}")
         return "\n".join(out)
 
     @staticmethod
@@ -263,7 +288,7 @@ class Recorder:
         actions that failed do not count."""
         tried, found = {}, {}      # per (page, button): fields left empty in some try / the form
         values = {}                # page -> {field: last value typed}
-        for s in self.steps:
+        for i, s in enumerate(self.steps):
             if s["tool"] in ("browser_type", "browser_fill_form") and not s["error"]:
                 vals = values.setdefault(s["page"], {})
                 if s["tool"] == "browser_type":
@@ -276,10 +301,12 @@ class Recorder:
                         vals[k] = v
             if s["tool"] not in SUBMITS or "filled" not in s or s["error"] or LEAVE.search(s["target"]):
                 continue
+            if s["tool"] == "browser_click" and not (s["target"].startswith("button") or _selector(s["target"])):
+                continue   # a link, a card or a menu item is not a form submit (a search box left filled, a quantity)
             key = (s["page"], s["target"])
             fields = s["filled"] + s["empty"]
             if s["filled"] and (s["to"] or key in found):   # a submit that went through with fields filled
-                found.setdefault(key, {"page": s["page"], "url": self.pages.get(s["page"], {}).get("url", ""),
+                found.setdefault(key, {"page": s["page"], "url": self.pages.get(s["page"], {}).get("url", ""), "at": i,
                                        "button": s["target"], "fields": fields,
                                        "key": s["value"] if s["tool"] == "browser_press_key" else "",
                                        "values": {f: values.get(s["page"], {}).get(f, "") for f in fields}})
@@ -314,15 +341,11 @@ class Recorder:
             for field in f["untried"]:
                 if len(log) >= max_tries or not f["url"]:
                     return log
-                await call("browser_navigate", {"url": f["url"]})
-                await call("browser_snapshot", {})
-                refs = self._refs()
-                submit_ok = f["key"] or f["button"] in refs or _selector(f["button"])
-                missing = [x for x in f["fields"] if x not in refs] + \
-                    ([] if submit_ok else [f["button"] or "the submit button"])
+                missing = await self._open_form(call, f)
                 if missing:
                     log.append(f"{f['page']} {field}: skipped, not on the page after opening it ({', '.join(missing)})")
                     continue
+                refs = self._refs()
                 for x in f["fields"]:
                     text = "" if x == field else (f["values"].get(x) or "test")
                     await call("browser_type", {"element": x, "ref": refs[x], "text": text})
@@ -335,6 +358,52 @@ class Recorder:
                 log.append(f"{f['page']} {field} empty: " + (" | ".join(said) if said else
                                                               ("went to " + s["to"]) if s["to"] else "no message"))
         return log
+
+    async def _open_form(self, call, f):
+        """Open the form's page; if its fields are not there (the session ended, or the page needs earlier steps),
+        replay the recorded path that led to it and look again. Returns what is still missing."""
+        def missing():
+            refs = self._refs()
+            ok = f["key"] or f["button"] in refs or _selector(f["button"])
+            return [x for x in f["fields"] if x not in refs] + ([] if ok else [f["button"] or "the submit button"])
+        await call("browser_navigate", {"url": f["url"]})
+        await call("browser_snapshot", {})
+        if not missing():
+            return []
+        path = []
+        for st in self._path_to(f["at"]):
+            if st["page"] == f["page"] and st["tool"] != "browser_navigate":
+                break       # arrived at the form: its own fields are filled by the probe
+            path.append(st)
+        for st in path:
+            if not await self._replay(call, st):
+                break
+        await call("browser_snapshot", {})
+        return missing()
+
+    async def _replay(self, call, st):
+        """Repeat one recorded action on the current page (refs change between page loads: resolved by label)."""
+        if st["tool"] == "browser_navigate":
+            await call("browser_navigate", {"url": st.get("url") or self.origin + st["to"]})
+            return True
+        await call("browser_snapshot", {})
+        refs = self._refs()
+        m = re.search(r'"(.+)"$', st["target"])
+        ref = refs.get(st["target"]) or (refs.get(m.group(1)) if m else None) or \
+            (st["target"] if _selector(st["target"]) else None)
+        if st["tool"] == "browser_press_key":
+            await call("browser_press_key", {"key": st["value"]})
+        elif ref is None:
+            return False
+        elif st["tool"] == "browser_type":
+            await call("browser_type", {"element": st["target"], "ref": ref, "text": st["value"]})
+        elif st["tool"] == "browser_select_option":
+            await call("browser_select_option", {"element": st["target"], "ref": ref, "values": [st["value"]]})
+        elif st["tool"] == "browser_click":
+            await call("browser_click", {"element": st["target"], "ref": ref})
+        else:
+            return False
+        return True
 
     def _refs(self):
         """label -> ref on the last page seen: fields by name, controls as 'role "label"' (as targets are written)."""
