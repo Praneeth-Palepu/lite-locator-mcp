@@ -204,8 +204,9 @@ print(render(cases, "markdown"))                  # or "csv", "json"
 - `probe` re-opens each form the explorer submitted successfully and submits it once per field with that field empty
   (the other fields get the values that went through), so every "is required" message is in the record even when the
   agent never tried it. Buttons that only leave a form (Cancel, Back, ...) are never treated as its submit button.
-  A form that can only be reached by clicking through (not by its URL) is reported as skipped; `rec.gaps()` lists
-  the untried paths as instructions you can send back to the agent instead.
+  When the form is not there after opening its URL (the session ended, or it is reached by clicking through), the
+  recorded path to it is replayed first; `rec.gaps()` lists the untried paths as instructions you can send back to
+  the agent instead.
 - `observed_cases()` gives one case per observed message (path to it, fields left empty, the exact text), written by
   the library. The writer tags them with criteria and writes only the rest; texts it did not see are marked
   "(not observed)" rather than guessed.
@@ -224,6 +225,40 @@ With Qwen3 4B the conversation-reading writer also wrote messages the site never
 locked-out text); with the record it wrote none. The exploration itself costs the same either way (it is most of the
 total here); the saving grows with the size of the conversation the writer would otherwise re-read. Full example:
 [`examples/write_test_cases.py`](examples/write_test_cases.py).
+
+### The same agent explores, then writes (test cases or scripts)
+
+If your agent explores and then, in the same conversation, gets "now write the test cases" (or the test scripts),
+every writing call would re-read the whole exploration. One hook stops that, and nothing else in your agent changes:
+
+```python
+from lite_locator.evidence import Recorder, followup_hook
+
+rec = Recorder()
+tools = with_lite_locator(await load_mcp_tools(session), lean=True, recorder=rec)
+agent = create_react_agent(llm, tools, pre_model_hook=followup_hook(rec))   # instead of snapshot_hook
+# 1st message: explore ...  2nd message: "now write the test cases" / "now write pytest-playwright scripts"
+```
+
+- **While exploring**, the hook behaves exactly like `snapshot_hook`.
+- **From the first instruction after the agent has acted**, each LLM call gets three things instead of the whole
+  exploration:
+  - the first task;
+  - the compact record (pages, actions and what they caused, exact messages, and the Playwright code each action
+    ran, i.e. its locators);
+  - the messages since that instruction.
+- **Your agent still writes the cases or scripts.** The library only decides what goes into the calls.
+- **Prompt caching:** the record is frozen when the follow-up begins, so every writing call starts with the same text
+  and provider prompt caches hit. Pass `trim=False` to keep the exploration history append-only too.
+
+Measured with Qwen3 4B on the same explorations (one writing call each):
+
+| Writer input per call | Re-reads the exploration | `followup_hook` |
+|---|---|---|
+| SauceDemo, test cases / test scripts | 6.4k / 6.4k | 2.5k / 2.5k |
+| Toolshop, test cases / test scripts | 7.8k / 7.8k | 2.5k / 2.5k |
+
+An agent that makes many writing calls pays this on every one of them.
 
 ## How "what changed" behaves
 

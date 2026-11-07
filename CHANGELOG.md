@@ -2,6 +2,51 @@
 
 Every release: what changed, why, and how it was checked. Reports with the full check output are in `ci/reports/`.
 
+## 0.2.1 (2026-11-07)
+**What:** cheaper writing when the same agent explores and then writes, plus fixes for Angular / React sites and
+negative tests.
+- `lite_locator.evidence.followup_hook(recorder)`: a LangGraph `pre_model_hook` for an agent that explores and then,
+  in the same conversation, is asked to write test cases or test scripts (or anything else). Exploration works as
+  with `snapshot_hook`. From the first instruction after the agent has acted, every LLM call gets the first task, the
+  recorder's compact record and the messages since that instruction, instead of the whole exploration. Your agent
+  still writes everything; the library only shapes its input. The record is frozen when the follow-up begins, so
+  every writing call starts with the same text and provider prompt caches hit. `trim=False` keeps the exploration
+  history append-only (for caching providers).
+- The record keeps the Playwright code each action ran (`page.locator('[data-test="email"]').fill(...)`):
+  `pack(code=True)`, used by `followup_hook` by default, so script writers get the real locators.
+- Angular / React fixes found on practicesoftwaretesting.com:
+  - Refs written as `ref:f19e213` (frame-prefixed refs) were passed through and Playwright rejected them. A
+    `browser_snapshot` scoped to a made-up selector is now taken of the whole page.
+  - Results that appear on the same page (search results, counts, totals, a cart badge `1 -> 2`, a ticked filter)
+    were recorded as "no change". They are now the step's outcome.
+  - Error messages in a plain `div` with no alert role ("Invalid email or password") were dropped from the change
+    report and the record. An unnamed container whose own text is feedback is now kept.
+  - Once a popup opened a second tab, every response led with the full tab list. It is now one line.
+- Negative tests:
+  - `probe()` replays the recorded path to a form when the form is not there (the session ended, or the page needs
+    earlier steps), instead of skipping it.
+  - Only real submits count as a form's submit: a button, Enter, or a selector. A click on a link, card or menu item
+    with a search box filled no longer makes junk "Search empty" negatives.
+  - After 2 failed sign-ins on a page, the action result tells the agent not to try again, because accounts lock.
+    Repeated wrong passwords locked a shared demo account.
+
+**Why:**
+- At work (GPT-5.4 agent, same agent explores then writes), the library cut exploration tokens by 34%, but writing
+  stayed at about 200–260k tokens and became the larger cost: the writing calls re-read the whole exploration.
+- A harder SPA (Toolshop) showed the evidence gaps above, which 0.2.0 users hit on any Angular / React site.
+
+**Checked:**
+- Unit tests for each fix and for the hook (input unchanged while exploring; the record instead of the exploration
+  afterwards; a stable prefix across writing calls). A probe test that signs in again.
+- Qwen3 4B, SauceDemo and Toolshop, the same exploration written both ways: writer input per call 6.4k → 2.5k and
+  7.8k → 2.5k, for test cases and test scripts.
+  - Test cases: criteria covered the same or better. On Toolshop the writer without the hook invented "Invalid
+    password"; with it, it used the real "Invalid email or password".
+  - Test scripts: every locator came from the record on SauceDemo. On Toolshop: 8 tests, one per criterion, instead
+    of 1.
+  - Not yet run against the live sites.
+- Full release checks in `ci/reports/0.2.1.md`.
+
 ## 0.2.0 (2026-11-03)
 **What:** `lite_locator.evidence`: writing test cases from an exploration, with fewer tokens and every negative path.
 - `Recorder` (pass `recorder=` to `with_lite_locator`): pages, fields, actions and the exact messages they caused,
